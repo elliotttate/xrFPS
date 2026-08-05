@@ -150,6 +150,14 @@ void MetricsCollector::stop() {
         nvml_lib_ = nullptr;
         g_nvml = Nvml{};
     }
+    if (session_view_ != nullptr) {
+        UnmapViewOfFile((const void*)session_view_);
+        session_view_ = nullptr;
+    }
+    if (session_mapping_ != nullptr) {
+        CloseHandle((HANDLE)session_mapping_);
+        session_mapping_ = nullptr;
+    }
     if (view_ != nullptr) {
         view_->updated_tick = 0; // readers see "stale" immediately
         UnmapViewOfFile(view_);
@@ -163,57 +171,24 @@ void MetricsCollector::stop() {
 }
 
 void MetricsCollector::detect_vr_app() {
-    const unsigned long long now = GetTickCount64();
-    if (vr_pid_ != 0 && now - last_app_scan_tick_ < 2000) {
-        HANDLE probe = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, vr_pid_);
-        if (probe != nullptr) {
-            CloseHandle(probe);
-            return; // still alive
+    // The layer publishes the app it is loaded into. Reading one shared struct
+    // replaces walking every process's module list, which cost hundreds of
+    // milliseconds per sample whenever no VR app was running.
+    if (session_view_ == nullptr) {
+        session_mapping_ = OpenFileMappingA(FILE_MAP_READ, FALSE, SharedSession::kName);
+        if (session_mapping_ != nullptr) {
+            session_view_ = (const SharedSession*)MapViewOfFile(session_mapping_, FILE_MAP_READ, 0, 0,
+                                                                sizeof(SharedSession));
         }
     }
-    last_app_scan_tick_ = now;
-    vr_pid_ = 0;
-    vr_name_.clear();
 
-    // The VR app is whichever non-infrastructure process has the OpenXR loader
-    // mapped — the same test the layer's own presence implies.
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) {
-        return;
+    if (session_view_ != nullptr && session_view_->fresh(GetTickCount64())) {
+        vr_pid_ = session_view_->pid;
+        vr_name_ = session_view_->app_name;
+    } else {
+        vr_pid_ = 0;
+        vr_name_.clear();
     }
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snap, &entry)) {
-        do {
-            if (!looks_like_vr_app(entry.szExeFile)) {
-                continue;
-            }
-            HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE,
-                                      entry.th32ProcessID);
-            if (proc == nullptr) {
-                continue;
-            }
-            HMODULE mods[512];
-            DWORD needed = 0;
-            if (EnumProcessModulesEx(proc, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) {
-                const int count = (int)(needed / sizeof(HMODULE));
-                for (int i = 0; i < count; ++i) {
-                    char name[MAX_PATH]{};
-                    if (GetModuleBaseNameA(proc, mods[i], name, sizeof(name)) > 0 &&
-                        _stricmp(name, "openxr_loader.dll") == 0) {
-                        vr_pid_ = entry.th32ProcessID;
-                        char narrow[64]{};
-                        WideCharToMultiByte(CP_UTF8, 0, entry.szExeFile, -1, narrow, sizeof(narrow) - 1,
-                                            nullptr, nullptr);
-                        vr_name_ = narrow;
-                        break;
-                    }
-                }
-            }
-            CloseHandle(proc);
-        } while (vr_pid_ == 0 && Process32NextW(snap, &entry));
-    }
-    CloseHandle(snap);
 }
 
 void MetricsCollector::sample() {

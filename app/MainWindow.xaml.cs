@@ -16,7 +16,8 @@ public sealed partial class MainWindow : Window
     private NativeConfig _config;
     private bool _loading = true;
     private readonly DispatcherQueueTimer _saveTimer;
-    private readonly DispatcherQueueTimer _pollTimer;
+    private readonly CancellationTokenSource _shutdown = new();
+    private Task? _sampler;
     private readonly WriteableBitmap _preview;
     private readonly byte[] _previewPixels;
     private readonly int _hudW;
@@ -72,21 +73,38 @@ public sealed partial class MainWindow : Window
         _saveTimer.IsRepeating = false;
         _saveTimer.Tick += (_, _) => Native.flipfps_config_save(ref _config);
 
-        _pollTimer = queue.CreateTimer();
-        _pollTimer.Interval = TimeSpan.FromMilliseconds(500);
-        _pollTimer.IsRepeating = true;
-        _pollTimer.Tick += (_, _) => Poll();
-        _pollTimer.Start();
+        // Sampling touches performance counters and can block for a while, so
+        // it runs on a worker and only the display update returns to the UI.
+        _sampler = Task.Run(async () =>
+        {
+            while (!_shutdown.IsCancellationRequested)
+            {
+                Native.flipfps_metrics_sample();
+                Native.flipfps_metrics_get(out NativeMetrics metrics);
+                var status = new StringBuilder(128);
+                Native.flipfps_metrics_status(status, status.Capacity);
+                queue.TryEnqueue(() => ShowMetrics(metrics, status.ToString()));
+                try
+                {
+                    await Task.Delay(500, _shutdown.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    return;
+                }
+            }
+        });
 
         Closed += (_, _) =>
         {
+            _shutdown.Cancel();
             Native.flipfps_config_save(ref _config);
             Native.flipfps_metrics_stop();
         };
 
         SelectPage(0);
         RefreshStatus();
-        Poll();
+        RenderPreview();
     }
 
     // ---- navigation -------------------------------------------------
@@ -208,21 +226,14 @@ public sealed partial class MainWindow : Window
 
     // ---- live loop --------------------------------------------------
 
-    private void Poll()
+    private void ShowMetrics(NativeMetrics m, string status)
     {
-        Native.flipfps_metrics_sample();
-        Native.flipfps_metrics_get(out NativeMetrics m);
-
         TileCpu.Text = m.CpuUsagePct >= 0 ? $"{m.CpuUsagePct:0}%" : "--";
         TileGpu.Text = m.GpuUsagePct >= 0 ? $"{m.GpuUsagePct:0}%" : "--";
         TileVram.Text = m.VramUsedMb >= 0 ? $"{m.VramUsedMb / 1024f:0.0} GB" : "--";
         TileTemp.Text = m.GpuTempC >= 0 ? $"{m.GpuTempC:0}°C" : "--";
         TileApp.Text = m.AppPid != 0 ? m.AppName : "none detected";
-
-        var status = new StringBuilder(128);
-        Native.flipfps_metrics_status(status, status.Capacity);
-        CollectorStatus.Text = status.ToString();
-
+        CollectorStatus.Text = status;
         RenderPreview();
     }
 

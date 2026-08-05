@@ -358,10 +358,11 @@ void update_gesture(Session* s, XrTime display_time) {
 } // namespace
 
 Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info,
-                        const NextFns* fns) {
+                        const NextFns* fns, const char* app_name) {
     auto* s = new Session();
     s->fns = fns;
     s->session = session;
+    s->session_info.start(app_name);
 
     for (const auto* entry = (const XrBaseInStructure*)create_info->next; entry != nullptr;
          entry = entry->next) {
@@ -461,6 +462,7 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
         }
     }
     s->last_end_frame_qpc_ms = now;
+    s->session_info.beat();
 
     // Pick up Control Center edits without restarting the game. One file
     // timestamp check per second is far cheaper than parsing every frame.

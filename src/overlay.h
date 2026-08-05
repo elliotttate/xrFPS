@@ -123,13 +123,15 @@ struct Session {
     unsigned long long config_stamp{};
     double last_config_check_ms{0.0};
     MetricsReader metrics{};
+    SessionPublisher session_info{};
 
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};
     XrCompositionLayerQuad quad{};
 };
 
-Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info, const NextFns* fns);
+Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info,
+                        const NextFns* fns, const char* app_name);
 void session_destroy(Session* s);
 void session_note_display_period(Session* s, XrDuration period_ns);
 

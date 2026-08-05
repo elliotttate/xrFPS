@@ -43,6 +43,78 @@ struct SharedMetrics {
     }
 };
 
+// The layer announces the VR application it is loaded into, so the Control
+// Center never has to hunt for it by enumerating process modules.
+struct SharedSession {
+    static constexpr uint32_t kMagic = 0x46535353; // 'FSSS'
+    static constexpr const char* kName = "Local\\FlipFPS_Session";
+
+    uint32_t magic{kMagic};
+    uint32_t pid{};
+    uint64_t heartbeat_tick{};
+    char app_name[64]{};
+
+    bool fresh(uint64_t now_tick, uint64_t max_age_ms = 5000) const {
+        return magic == kMagic && pid != 0 && heartbeat_tick != 0 && now_tick >= heartbeat_tick &&
+               (now_tick - heartbeat_tick) <= max_age_ms;
+    }
+};
+
+// Layer side: publish this process as the live VR app.
+class SessionPublisher {
+public:
+    ~SessionPublisher() { stop(); }
+
+    void start(const char* app_name) {
+        if (view_ != nullptr) {
+            return;
+        }
+        mapping_ = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+                                      sizeof(SharedSession), SharedSession::kName);
+        if (mapping_ == nullptr) {
+            return;
+        }
+        view_ = (SharedSession*)MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedSession));
+        if (view_ == nullptr) {
+            return;
+        }
+        view_->magic = SharedSession::kMagic;
+        view_->pid = GetCurrentProcessId();
+        strncpy_s(view_->app_name, sizeof(view_->app_name), app_name != nullptr ? app_name : "",
+                  _TRUNCATE);
+        view_->heartbeat_tick = GetTickCount64();
+    }
+
+    // Cheap enough to call every frame; only stores once a second.
+    void beat() {
+        if (view_ == nullptr) {
+            return;
+        }
+        const uint64_t now = GetTickCount64();
+        if (now - view_->heartbeat_tick >= 1000) {
+            view_->heartbeat_tick = now;
+        }
+    }
+
+    void stop() {
+        if (view_ != nullptr) {
+            if (view_->pid == GetCurrentProcessId()) {
+                view_->pid = 0; // readers stop attributing GPU load to us
+            }
+            UnmapViewOfFile(view_);
+            view_ = nullptr;
+        }
+        if (mapping_ != nullptr) {
+            CloseHandle(mapping_);
+            mapping_ = nullptr;
+        }
+    }
+
+private:
+    HANDLE mapping_{};
+    SharedSession* view_{};
+};
+
 // Reader side: maps the block if the collector is running. Safe to call
 // repeatedly; connects as soon as the Control Center starts publishing.
 class MetricsReader {

@@ -44,7 +44,8 @@ private:
 
     unsigned long vr_pid_{};
     std::string vr_name_;
-    unsigned long long last_app_scan_tick_{};
+    void* session_mapping_{};
+    const SharedSession* session_view_{};
 };
 
 } // namespace flipfps

@@ -24,6 +24,7 @@ struct Global {
     PFN_xrGetInstanceProcAddr next_gipa{};
     flipfps::NextFns fns{};
 
+    char app_name[64]{};
     XrActionSet action_set{XR_NULL_HANDLE};
     XrAction grip_action{XR_NULL_HANDLE};
     XrPath hand_path[2]{XR_NULL_PATH, XR_NULL_PATH};
@@ -81,7 +82,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSession(XrInstance instance,
                                                     XrSession* session) {
     const XrResult r = g.fns.createSession(instance, create_info, session);
     if (XR_SUCCEEDED(r)) {
-        auto* s = flipfps::session_create(instance, *session, create_info, &g.fns);
+        auto* s = flipfps::session_create(instance, *session, create_info, &g.fns, g.app_name);
         std::lock_guard<std::mutex> lock(g.mtx);
         g.sessions[*session] = s;
     }
@@ -355,6 +356,7 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstance
     g.fns.getInstanceProcAddr = g.next_gipa;
 
     create_our_actions();
+    strncpy_s(g.app_name, sizeof(g.app_name), create_info->applicationInfo.applicationName, _TRUNCATE);
     flog("instance ready (app: %s)", create_info->applicationInfo.applicationName);
     return XR_SUCCESS;
 }
