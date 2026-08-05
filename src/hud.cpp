@@ -104,10 +104,25 @@ void hud_render(uint8_t* out, const FrameStats& stats, bool bgra) {
     cv.text(20, 18, 4, buf, fps_color);
 
     snprintf(buf, sizeof(buf), "%5.2f MS", avg_ms);
-    cv.text(HUD_W - 20 - 8 * 2 * (int)strlen(buf), 18, 2, buf, kText);
+    cv.text(HUD_W - 20 - 8 * 2 * (int)strlen(buf), 14, 2, buf, kText);
 
     snprintf(buf, sizeof(buf), "TGT %4.1f", target);
-    cv.text(HUD_W - 20 - 8 * 2 * (int)strlen(buf), 40, 2, buf, kTextDim);
+    cv.text(HUD_W - 20 - 8 * 2 * (int)strlen(buf), 34, 2, buf, kTextDim);
+
+    // Share of recent frames that hit the target — makes "peak rate vs real
+    // delivered rate" visible at a glance.
+    if (stats.count > 0) {
+        int on_target = 0;
+        for (int i = 0; i < stats.count; ++i) {
+            if (stats.sample(i) <= target * 1.06f) {
+                ++on_target;
+            }
+        }
+        const int pct = (int)(100.0f * (float)on_target / (float)stats.count + 0.5f);
+        Color c = pct >= 95 ? kGood : (pct >= 70 ? kWarn : kBad);
+        snprintf(buf, sizeof(buf), "ON TGT %d%%", pct);
+        cv.text(HUD_W - 20 - 8 * 2 * (int)strlen(buf), 54, 2, buf, c);
+    }
 
     // Frametime graph: one 2px bar per sample, newest at the right edge.
     constexpr int kGx = 16, kGy = 70, kGw = 480, kGh = 168;
