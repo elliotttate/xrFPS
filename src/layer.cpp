@@ -310,36 +310,9 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     XrApiLayerCreateInfo chained = *layer_info;
     chained.nextInfo = next->next;
 
-    // Enable Meta's telemetry extension for the layer when the active runtime
-    // exposes it. API layers may add supported extensions to the downchain
-    // instance even when the application itself does not use them.
-    bool meta_metrics_supported = false;
-    PFN_xrEnumerateInstanceExtensionProperties enumerate_extensions{};
-    if (XR_SUCCEEDED(next->nextGetInstanceProcAddr(
-            XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties",
-            (PFN_xrVoidFunction*)&enumerate_extensions)) &&
-        enumerate_extensions != nullptr) {
-        uint32_t extension_count = 0;
-        if (XR_SUCCEEDED(enumerate_extensions(nullptr, 0, &extension_count, nullptr))) {
-            std::vector<XrExtensionProperties> available(
-                extension_count, {XR_TYPE_EXTENSION_PROPERTIES});
-            if (XR_SUCCEEDED(enumerate_extensions(nullptr, extension_count, &extension_count,
-                                                  available.data()))) {
-                for (const auto& extension : available) {
-                    if (std::strcmp(extension.extensionName,
-                                    XR_META_PERFORMANCE_METRICS_EXTENSION_NAME) == 0) {
-                        meta_metrics_supported = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Test aid: XRFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
-    // instance extensions on the app's behalf (e.g. Meta XR Operator's
-    // automation extension inside an off-the-shelf game). No effect unless
-    // the environment variable is set.
+    // Kept so a rejected extension can be retried with the application's own
+    // request; its extension-name array belongs to the caller and outlives us.
+    const XrInstanceCreateInfo original_create_info = *create_info;
     XrInstanceCreateInfo modified_create_info = *create_info;
     std::vector<const char*> extra_extensions;
     std::vector<std::string> extra_storage;
@@ -351,11 +324,23 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
         return std::any_of(extra_extensions.begin(), extra_extensions.end(),
                            [wanted](const char* name) { return std::strcmp(name, wanted) == 0; });
     };
+    // Meta's telemetry extension gives the HUD runtime-native timing. Whether
+    // the runtime has it can only be answered by something below us, and
+    // nothing below us can answer until its own instance exists - the loader
+    // hands each layer a next-dispatch only once nextCreateApiLayerInstance
+    // has returned. Asking earlier reaches a layer that has no downstream yet,
+    // which is at best an error and at worst a crash inside that layer. So ask
+    // for the extension and let the create tell us: a runtime without it fails
+    // the call, and we retry with exactly what the application requested.
     bool added_meta_metrics = false;
-    if (meta_metrics_supported && !has_extension(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)) {
+    if (!has_extension(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)) {
         extra_extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
         added_meta_metrics = true;
     }
+    // Test aid: XRFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
+    // instance extensions on the app's behalf (e.g. Meta XR Operator's
+    // automation extension inside an off-the-shelf game). No effect unless
+    // the environment variable is set.
     char extra_env[512]{};
     if (GetEnvironmentVariableA("XRFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
         char* context = nullptr;
@@ -375,7 +360,17 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
         create_info = &modified_create_info;
     }
 
-    const XrResult r = next->nextCreateApiLayerInstance(create_info, &chained, instance);
+    XrResult r = next->nextCreateApiLayerInstance(create_info, &chained, instance);
+    if (XR_FAILED(r) && create_info == &modified_create_info) {
+        // One of the extensions we added is unavailable. The application's own
+        // request was valid before we touched it, so fall back to it verbatim
+        // rather than failing a session the application could have had.
+        flog("instance creation failed (%d) with %u added extension(s); retrying with the application's own list",
+             (int)r, (unsigned)(extra_extensions.size() - original_create_info.enabledExtensionCount));
+        added_meta_metrics = false;
+        extra_storage.clear();
+        r = next->nextCreateApiLayerInstance(&original_create_info, &chained, instance);
+    }
     if (XR_FAILED(r)) {
         return r;
     }
