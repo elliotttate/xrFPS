@@ -86,6 +86,7 @@ struct Session {
 
     FrameStats stats{};
     double last_end_frame_qpc_ms{0.0};
+    double last_upload_qpc_ms{0.0};
 
     // Gesture state.
     bool visible{false};

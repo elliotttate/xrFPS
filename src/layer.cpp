@@ -293,9 +293,36 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstance
     XrApiLayerCreateInfo chained = *layer_info;
     chained.nextInfo = next->next;
 
+    // Test aid: FLIPFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
+    // instance extensions on the app's behalf (e.g. Meta XR Operator's
+    // automation extension inside an off-the-shelf game). No effect unless
+    // the environment variable is set.
+    XrInstanceCreateInfo modified_create_info = *create_info;
+    std::vector<const char*> extra_extensions;
+    std::vector<std::string> extra_storage;
+    char extra_env[512]{};
+    if (GetEnvironmentVariableA("FLIPFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
+        extra_extensions.assign(create_info->enabledExtensionNames,
+                                create_info->enabledExtensionNames + create_info->enabledExtensionCount);
+        char* context = nullptr;
+        for (char* token = strtok_s(extra_env, ",", &context); token != nullptr;
+             token = strtok_s(nullptr, ",", &context)) {
+            extra_storage.emplace_back(token);
+        }
+        for (const std::string& name : extra_storage) {
+            extra_extensions.push_back(name.c_str());
+        }
+        modified_create_info.enabledExtensionNames = extra_extensions.data();
+        modified_create_info.enabledExtensionCount = (uint32_t)extra_extensions.size();
+        create_info = &modified_create_info;
+    }
+
     const XrResult r = next->nextCreateApiLayerInstance(create_info, &chained, instance);
     if (XR_FAILED(r)) {
         return r;
+    }
+    if (!extra_storage.empty()) {
+        flog("enabled %u extra extension(s) via FLIPFPS_TEST_ENABLE_EXT", (unsigned)extra_storage.size());
     }
 
     g.instance = *instance;

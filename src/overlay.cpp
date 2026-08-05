@@ -151,6 +151,17 @@ bool ensure_swapchain(Session* s) {
 // Renders the HUD and moves it into the current swapchain image. Returns false
 // if nothing has ever been uploaded (the quad must not be shown yet).
 bool update_content(Session* s) {
+    // Refresh the pixels at ~10 Hz, not every frame: the acquire/upload/release
+    // round-trip runs on the app's render thread inside xrEndFrame, and some
+    // runtimes block in xrWaitSwapchainImage — repainting per frame adds real
+    // latency to the host app. Between refreshes the quad keeps compositing
+    // the last released image at zero cost.
+    constexpr double kHudRefreshIntervalMs = 100.0;
+    const double now = qpc_ms();
+    if (s->ever_uploaded && now - s->last_upload_qpc_ms < kHudRefreshIntervalMs) {
+        return true;
+    }
+
     if (s->gfx == Gfx::D3D12 && s->d12_fence->GetCompletedValue() < s->d12_fence_value) {
         return s->ever_uploaded; // previous copy still in flight; reuse last released image
     }
@@ -213,6 +224,7 @@ bool update_content(Session* s) {
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     s->fns->releaseSwapchainImage(s->swapchain, &release);
     s->ever_uploaded = true;
+    s->last_upload_qpc_ms = now;
     return true;
 }
 
