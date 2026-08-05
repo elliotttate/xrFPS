@@ -31,17 +31,35 @@ minor misses, red for spikes.
 
 ## Install
 
-Build (or grab a release), then:
+Run **`flipfps_control.exe`** — the Control Center — and press **Install
+layer**. That copies the layer to `%LOCALAPPDATA%\FlipFPS` and registers it
+per-user (HKCU, no admin). Every OpenXR app started afterwards has it.
 
-```powershell
-.\scripts\Install-Layer.ps1
-```
+![Control Center](docs/control-center.png)
 
-This copies the layer to `%LOCALAPPDATA%\FlipFPS` and registers it per-user
-(HKCU — no admin needed). Every OpenXR app started afterwards has it.
+The same window is where you tune everything, and **settings apply live** —
+the layer re-reads them about once a second, so a game already running picks
+up changes without restarting:
 
-Remove with `.\scripts\Uninstall-Layer.ps1`. Disable temporarily by setting
-the environment variable `FLIPFPS_DISABLE=1` for a given app.
+- **Gesture** — which controller, how far it must rotate, show/hide delays.
+- **Placement & look** — panel size, distance off the controller, roll,
+  opacity, theme, and how often the HUD repaints.
+- **Readouts** — pick exactly which rows appear: FPS, frametime, target,
+  on-target %, 1% low, and the frametime graph, plus system metrics (CPU and
+  GPU usage, this app's own GPU share, VRAM, GPU clock/temperature, RAM).
+- **Preview** — rendered by the layer's own HUD code, so what you see is what
+  the headset shows, including live metric values.
+
+System metrics come from the Control Center itself (PDH performance counters,
+plus NVML on NVIDIA cards) and are handed to the layer through shared memory —
+an API layer inside a game process cannot read them on its own. Leave the app
+running to keep those rows updating; everything else works without it.
+
+Scriptable equivalents: `flipfps_control.exe --install`, `--uninstall`,
+`--status`. Disable temporarily for one game with `FLIPFPS_DISABLE=1`, or
+uncheck **Overlay enabled** to switch it off everywhere while leaving the
+layer loaded. The PowerShell scripts under `scripts/` still work if you
+prefer them.
 
 ## Build
 
@@ -52,6 +70,7 @@ cmake --build build --config Release
 
 Targets:
 
+- `flipfps_control` — the Control Center desktop app (ImGui + D3D11).
 - `XrApiLayer_flipfps` — the layer DLL + manifest.
 - `flipfps_hudtest` — renders the HUD to a BMP for quick visual iteration,
   no headset required.

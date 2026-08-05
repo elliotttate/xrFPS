@@ -10,12 +10,7 @@
 namespace flipfps {
 namespace {
 
-constexpr float kQuadWidthM = 0.32f;
-constexpr float kQuadHeightM = 0.16f;
-constexpr float kQuadBottomOffsetM = 0.11f; // panel sits this far off the controller's bottom
-constexpr float kFlipShowSeconds = 0.25; // hold upside down this long to show
-constexpr float kUnflipHideSeconds = 0.5;
-constexpr float kFlipUpY = -0.55f;       // grip +Y world-Y below this = upside down
+constexpr float kQuadAspect = (float)HUD_H / (float)HUD_W;
 
 double qpc_ms() {
     static const double freq = [] {
@@ -156,7 +151,8 @@ bool update_content(Session* s) {
     // runtimes block in xrWaitSwapchainImage — repainting per frame adds real
     // latency to the host app. Between refreshes the quad keeps compositing
     // the last released image at zero cost.
-    constexpr double kHudRefreshIntervalMs = 150.0;
+    const double kHudRefreshIntervalMs =
+        1000.0 / std::clamp(s->config.hud_refresh_hz, 1.0f, 30.0f);
     const double now = qpc_ms();
     if (s->ever_uploaded && now - s->last_upload_qpc_ms < kHudRefreshIntervalMs) {
         return true;
@@ -166,7 +162,7 @@ bool update_content(Session* s) {
         return s->ever_uploaded; // previous copy still in flight; reuse last released image
     }
 
-    hud_render(s->pixels.data(), s->stats, s->swapchain_bgra);
+    hud_render(s->pixels.data(), s->stats, s->config, s->metrics.get(), s->swapchain_bgra);
     const double t_rastered = qpc_ms();
 
     uint32_t index = 0;
@@ -290,12 +286,21 @@ void update_gesture(Session* s, XrTime display_time) {
         grip_valid[0] = true;
     }
 
+    // "Upside down" is the grip's up-vector tipped past the configured angle;
+    // cos() converts the user-facing degrees into the comparison directly.
+    const float flip_cos = std::cos(std::clamp(s->config.flip_angle_deg, 45.0f, 179.0f) * 3.14159265f / 180.0f);
     for (int hand = 0; hand < 2; ++hand) {
         if (!grip_valid[hand]) {
             continue;
         }
+        if (s->config.hand == 1 && hand != 0) {
+            continue;
+        }
+        if (s->config.hand == 2 && hand != 1) {
+            continue;
+        }
         const V3 up = rotate(grip_pose[hand].orientation, {0.0f, 1.0f, 0.0f});
-        if (!flipped && up.y < kFlipUpY) {
+        if (!flipped && up.y < flip_cos) {
             flipped = true;
             s->anchor_hand = hand;
         }
@@ -307,8 +312,13 @@ void update_gesture(Session* s, XrTime display_time) {
     // controller's exact angle every frame — no billboarding.
     if (s->anchor_hand >= 0 && grip_valid[s->anchor_hand] && (flipped || s->visible)) {
         const XrPosef& grip = grip_pose[s->anchor_hand];
-        s->anchor_pose.orientation = qmul(grip.orientation, XrQuaternionf{0.0f, 0.0f, 1.0f, 0.0f});
-        const V3 off = rotate(grip.orientation, {0.0f, -kQuadBottomOffsetM, 0.0f});
+        // 180 degrees about Z puts the face on the controller's underside; the
+        // configured roll then tilts the panel about its own view axis.
+        const float roll = s->config.panel_roll_deg * 3.14159265f / 180.0f;
+        const XrQuaternionf flip_z{0.0f, 0.0f, 1.0f, 0.0f};
+        const XrQuaternionf user_roll{0.0f, 0.0f, std::sin(roll * 0.5f), std::cos(roll * 0.5f)};
+        s->anchor_pose.orientation = qmul(qmul(grip.orientation, flip_z), user_roll);
+        const V3 off = rotate(grip.orientation, {0.0f, -s->config.panel_offset_m, 0.0f});
         s->anchor_pose.position = {grip.position.x + off.x, grip.position.y + off.y,
                                    grip.position.z + off.z};
         s->anchor_valid = true;
@@ -318,7 +328,7 @@ void update_gesture(Session* s, XrTime display_time) {
         s->unflip_since_ms = 0.0;
         if (s->flip_since_ms == 0.0) {
             s->flip_since_ms = now;
-        } else if (!s->visible && now - s->flip_since_ms > kFlipShowSeconds * 1000.0) {
+        } else if (!s->visible && now - s->flip_since_ms > s->config.show_delay_sec * 1000.0) {
             s->visible = true;
             flog("gesture: shown");
         }
@@ -327,7 +337,7 @@ void update_gesture(Session* s, XrTime display_time) {
         if (s->visible) {
             if (s->unflip_since_ms == 0.0) {
                 s->unflip_since_ms = now;
-            } else if (now - s->unflip_since_ms > kUnflipHideSeconds * 1000.0) {
+            } else if (now - s->unflip_since_ms > s->config.hide_delay_sec * 1000.0) {
                 s->visible = false;
                 flog("gesture: hidden");
             }
@@ -335,12 +345,14 @@ void update_gesture(Session* s, XrTime display_time) {
     }
 
     // F10 toggles a head-locked fallback (also works when no controller binds).
-    const bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
-    if (f10 && !s->f10_was_down) {
-        s->force_show = !s->force_show;
-        flog("F10 force-show: %d", (int)s->force_show);
+    if (s->config.f10_toggle) {
+        const bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+        if (f10 && !s->f10_was_down) {
+            s->force_show = !s->force_show;
+            flog("F10 force-show: %d", (int)s->force_show);
+        }
+        s->f10_was_down = f10;
     }
-    s->f10_was_down = f10;
 }
 
 } // namespace
@@ -378,6 +390,9 @@ Session* session_create(XrInstance instance, XrSession session, const XrSessionC
         XR_SUCCEEDED(fns->getSystemProperties(instance, create_info->systemId, &props))) {
         s->max_layers = props.graphicsProperties.maxLayerCount;
     }
+
+    s->config.load(); // absent file keeps the defaults
+    s->config_stamp = Config::stamp();
 
     flog("session created: gfx=%s maxLayers=%u",
          s->gfx == Gfx::D3D11 ? "d3d11" : (s->gfx == Gfx::D3D12 ? "d3d12" : "unsupported"),
@@ -447,9 +462,22 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     }
     s->last_end_frame_qpc_ms = now;
 
+    // Pick up Control Center edits without restarting the game. One file
+    // timestamp check per second is far cheaper than parsing every frame.
+    if (now - s->last_config_check_ms > 1000.0) {
+        s->last_config_check_ms = now;
+        const unsigned long long stamp = Config::stamp();
+        if (stamp != s->config_stamp) {
+            s->config_stamp = stamp;
+            if (s->config.load()) {
+                flog("config reloaded");
+            }
+        }
+    }
+
     update_gesture(s, frame_end_info->displayTime);
 
-    const bool show = (s->visible && s->anchor_valid) || s->force_show;
+    const bool show = s->config.enabled && ((s->visible && s->anchor_valid) || s->force_show);
     if (!show || s->gfx == Gfx::None || frame_end_info->layerCount + 1 > s->max_layers) {
         return s->fns->endFrame(s->session, frame_end_info);
     }
@@ -464,7 +492,8 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     s->quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     s->quad.subImage.swapchain = s->swapchain;
     s->quad.subImage.imageRect = {{0, 0}, {HUD_W, HUD_H}};
-    s->quad.size = {kQuadWidthM, kQuadHeightM};
+    const float width_m = std::clamp(s->config.panel_width_m, 0.05f, 2.0f);
+    s->quad.size = {width_m, width_m * kQuadAspect};
     if (s->visible && s->anchor_valid) {
         s->quad.space = s->ref_space;
         s->quad.pose = s->anchor_pose;

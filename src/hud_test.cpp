@@ -44,8 +44,11 @@ int main(int argc, char** argv) {
         stats.push(m);
     }
 
+    flipfps::Config config{};
+    config.show_percentiles = true;
+
     std::vector<uint8_t> px(HUD_W * HUD_H * 4);
-    hud_render(px.data(), stats, /*bgra=*/true);
+    hud_render(px.data(), stats, config, nullptr, /*bgra=*/true);
 
     // Composite onto a checkerboard so alpha is visible.
     std::vector<uint8_t> outpx(HUD_W * HUD_H * 4);

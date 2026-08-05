@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "config.h"
+#include "metrics.h"
 #include "stats.h"
 
 namespace flipfps {
@@ -115,6 +117,12 @@ struct Session {
     bool test_pose_env_checked{false};
     HANDLE test_pose_mapping{};
     const volatile float* test_pose_view{};
+
+    // Live settings, re-read when the Control Center rewrites the file.
+    Config config{};
+    unsigned long long config_stamp{};
+    double last_config_check_ms{0.0};
+    MetricsReader metrics{};
 
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};

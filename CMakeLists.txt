@@ -34,6 +34,7 @@ add_library(XrApiLayer_flipfps SHARED
     src/layer.cpp
     src/overlay.cpp
     src/hud.cpp
+    src/config.cpp
 )
 target_include_directories(XrApiLayer_flipfps PRIVATE "${FLIPFPS_OPENXR_INCLUDE}")
 target_link_libraries(XrApiLayer_flipfps PRIVATE d3d11 d3d12 dxgi)
@@ -48,9 +49,50 @@ add_custom_command(TARGET XrApiLayer_flipfps POST_BUILD
 
 # Offline HUD renderer test: writes a BMP so the layout/font/graph can be
 # inspected without a headset.
-add_executable(flipfps_hudtest src/hud_test.cpp src/hud.cpp)
+add_executable(flipfps_hudtest src/hud_test.cpp src/hud.cpp src/config.cpp)
 target_include_directories(flipfps_hudtest PRIVATE "${FLIPFPS_OPENXR_INCLUDE}")
 target_compile_definitions(flipfps_hudtest PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+# FlipFPS Control Center: install/enable the layer, tune options, preview.
+option(FLIPFPS_BUILD_GUI "Build the Control Center desktop app" ON)
+if(FLIPFPS_BUILD_GUI)
+    include(FetchContent)
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.91.5
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_GetProperties(imgui)
+    if(NOT imgui_POPULATED)
+        FetchContent_Populate(imgui)
+    endif()
+
+    add_executable(flipfps_control WIN32
+        gui/main.cpp
+        gui/installer.cpp
+        gui/metrics_collector.cpp
+        src/hud.cpp
+        src/config.cpp
+        "${imgui_SOURCE_DIR}/imgui.cpp"
+        "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+        "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+        "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+        "${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp"
+        "${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp"
+    )
+    target_include_directories(flipfps_control PRIVATE
+        "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends" "${FLIPFPS_OPENXR_INCLUDE}")
+    target_link_libraries(flipfps_control PRIVATE d3d11 dxgi dwmapi shell32)
+    target_compile_definitions(flipfps_control PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # The Control Center installs the layer from its own directory.
+    add_custom_command(TARGET flipfps_control POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:XrApiLayer_flipfps>" "$<TARGET_FILE_DIR:flipfps_control>/"
+    )
+    add_dependencies(flipfps_control XrApiLayer_flipfps)
+endif()
 
 # Minimal OpenXR D3D11 app for exercising the layer end-to-end (needs the
 # OpenXR loader, built from the SDK sources).

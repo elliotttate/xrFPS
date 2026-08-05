@@ -43,4 +43,40 @@ struct FrameStats {
         const float a = avg();
         return a > 0.0f ? 1000.0f / a : 0.0f;
     }
+
+    // Worst frametime at the given percentile of the retained window, e.g.
+    // 0.99 for the classic "1% low". Insertion sort over <=512 mostly-sorted
+    // samples is well under the cost of the HUD raster it feeds.
+    float percentile_ms(float p) const {
+        if (count == 0) {
+            return 0.0f;
+        }
+        float sorted[N];
+        for (int i = 0; i < count; ++i) {
+            sorted[i] = sample(i);
+        }
+        for (int i = 1; i < count; ++i) {
+            const float key = sorted[i];
+            int j = i - 1;
+            while (j >= 0 && sorted[j] > key) {
+                sorted[j + 1] = sorted[j];
+                --j;
+            }
+            sorted[j + 1] = key;
+        }
+        int idx = (int)(p * (float)(count - 1) + 0.5f);
+        if (idx < 0) {
+            idx = 0;
+        }
+        if (idx >= count) {
+            idx = count - 1;
+        }
+        return sorted[idx];
+    }
+
+    // FPS equivalent of a percentile frametime (higher percentile = worse).
+    float percentile_fps(float p) const {
+        const float ms = percentile_ms(p);
+        return ms > 0.0f ? 1000.0f / ms : 0.0f;
+    }
 };
