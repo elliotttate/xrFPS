@@ -12,7 +12,7 @@ namespace {
 
 constexpr float kQuadWidthM = 0.32f;
 constexpr float kQuadHeightM = 0.16f;
-constexpr float kQuadLiftM = 0.15f;      // panel floats this far above the controller
+constexpr float kQuadBottomOffsetM = 0.11f; // panel sits this far off the controller's bottom
 constexpr float kFlipShowSeconds = 0.25; // hold upside down this long to show
 constexpr float kUnflipHideSeconds = 0.5;
 constexpr float kFlipUpY = -0.55f;       // grip +Y world-Y below this = upside down
@@ -32,6 +32,14 @@ struct V3 {
     float x, y, z;
 };
 
+// glm convention: (a*b) applies b first, then a.
+XrQuaternionf qmul(const XrQuaternionf& a, const XrQuaternionf& b) {
+    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
 V3 rotate(const XrQuaternionf& q, V3 v) {
     // v' = v + 2*cross(q.xyz, cross(q.xyz, v) + q.w*v)
     const V3 u{q.x, q.y, q.z};
@@ -41,48 +49,6 @@ V3 rotate(const XrQuaternionf& q, V3 v) {
     return {v.x + 2.0f * (u.y * c1.z - u.z * c1.y),
             v.y + 2.0f * (u.z * c1.x - u.x * c1.z),
             v.z + 2.0f * (u.x * c1.y - u.y * c1.x)};
-}
-
-// Orientation whose +Z is `z` (unit), world-up referenced, for billboarding.
-XrQuaternionf quat_from_z(V3 z) {
-    const float xl = std::sqrt(z.z * z.z + z.x * z.x);
-    V3 x, y;
-    if (xl < 1e-4f) {
-        // Looking straight up/down: fall back to a fixed right vector.
-        x = {1.0f, 0.0f, 0.0f};
-    } else {
-        x = {z.z / xl, 0.0f, -z.x / xl}; // normalize(cross((0,1,0), z))
-    }
-    y = {z.y * x.z - z.z * x.y, z.z * x.x - z.x * x.z, z.x * x.y - z.y * x.x}; // cross(z, x)
-
-    const float tr = x.x + y.y + z.z;
-    XrQuaternionf q{0, 0, 0, 1};
-    if (tr > 0.0f) {
-        const float s = std::sqrt(tr + 1.0f) * 2.0f;
-        q.w = 0.25f * s;
-        q.x = (y.z - z.y) / s;
-        q.y = (z.x - x.z) / s;
-        q.z = (x.y - y.x) / s;
-    } else if (x.x > y.y && x.x > z.z) {
-        const float s = std::sqrt(1.0f + x.x - y.y - z.z) * 2.0f;
-        q.w = (y.z - z.y) / s;
-        q.x = 0.25f * s;
-        q.y = (y.x + x.y) / s;
-        q.z = (z.x + x.z) / s;
-    } else if (y.y > z.z) {
-        const float s = std::sqrt(1.0f + y.y - x.x - z.z) * 2.0f;
-        q.w = (z.x - x.z) / s;
-        q.x = (y.x + x.y) / s;
-        q.y = 0.25f * s;
-        q.z = (z.y + y.z) / s;
-    } else {
-        const float s = std::sqrt(1.0f + z.z - x.x - y.y) * 2.0f;
-        q.w = (x.y - y.x) / s;
-        q.x = (z.x + x.z) / s;
-        q.y = (z.y + y.z) / s;
-        q.z = 0.25f * s;
-    }
-    return q;
 }
 
 bool ensure_swapchain(Session* s) {
@@ -254,7 +220,9 @@ void update_gesture(Session* s, XrTime display_time) {
     const double now = qpc_ms();
 
     bool flipped = false;
-    for (int hand = 0; hand < 2 && !flipped; ++hand) {
+    XrPosef grip_pose[2];
+    bool grip_valid[2]{false, false};
+    for (int hand = 0; hand < 2; ++hand) {
         if (s->grip_space[hand] == XR_NULL_HANDLE) {
             continue;
         }
@@ -267,28 +235,27 @@ void update_gesture(Session* s, XrTime display_time) {
         if ((loc.locationFlags & kNeeded) != kNeeded) {
             continue;
         }
-        const V3 up = rotate(loc.pose.orientation, {0.0f, 1.0f, 0.0f});
-        if (up.y < kFlipUpY) {
-            flipped = true;
+        grip_pose[hand] = loc.pose;
+        grip_valid[hand] = true;
 
-            // Anchor the panel above the flipped controller, facing the head.
-            V3 pos{loc.pose.position.x, loc.pose.position.y + kQuadLiftM, loc.pose.position.z};
-            V3 z{0.0f, 0.0f, 1.0f};
-            XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
-            if (XR_SUCCEEDED(s->fns->locateSpace(s->view_space, s->ref_space, display_time, &head)) &&
-                (head.locationFlags & kNeeded) == kNeeded) {
-                V3 to_head{head.pose.position.x - pos.x, head.pose.position.y - pos.y,
-                           head.pose.position.z - pos.z};
-                const float len =
-                    std::sqrt(to_head.x * to_head.x + to_head.y * to_head.y + to_head.z * to_head.z);
-                if (len > 1e-4f) {
-                    z = {to_head.x / len, to_head.y / len, to_head.z / len};
-                }
-            }
-            s->anchor_pose.position = {pos.x, pos.y, pos.z};
-            s->anchor_pose.orientation = quat_from_z(z);
-            s->anchor_valid = true;
+        const V3 up = rotate(loc.pose.orientation, {0.0f, 1.0f, 0.0f});
+        if (!flipped && up.y < kFlipUpY) {
+            flipped = true;
+            s->anchor_hand = hand;
         }
+    }
+
+    // The panel is rigidly attached to the bottom of the flipped controller:
+    // its orientation is the grip orientation rolled 180 degrees (so the face
+    // points out of the controller's underside) and it follows the
+    // controller's exact angle every frame — no billboarding.
+    if (s->anchor_hand >= 0 && grip_valid[s->anchor_hand] && (flipped || s->visible)) {
+        const XrPosef& grip = grip_pose[s->anchor_hand];
+        s->anchor_pose.orientation = qmul(grip.orientation, XrQuaternionf{0.0f, 0.0f, 1.0f, 0.0f});
+        const V3 off = rotate(grip.orientation, {0.0f, -kQuadBottomOffsetM, 0.0f});
+        s->anchor_pose.position = {grip.position.x + off.x, grip.position.y + off.y,
+                                   grip.position.z + off.z};
+        s->anchor_valid = true;
     }
 
     if (flipped) {

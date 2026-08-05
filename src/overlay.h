@@ -93,6 +93,7 @@ struct Session {
     bool f10_was_down{false};
     double flip_since_ms{0.0};
     double unflip_since_ms{0.0};
+    int anchor_hand{-1};
     XrPosef anchor_pose{{0, 0, 0, 1}, {0, 0, 0}};
     bool anchor_valid{false};
 

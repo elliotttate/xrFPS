@@ -1,18 +1,20 @@
-// Minimal OpenXR D3D11 test app for exercising the FlipFPS layer without a
-// full game: creates a session, suggests bindings and attaches an action set
-// (so the layer's merge paths run), then clears each eye to an animated color
-// in a standard frame loop. An optional sinusoidal CPU sleep gives the
-// frametime graph something to show.
+// Minimal OpenXR test app for exercising the FlipFPS layer without a full
+// game: creates a session (D3D11 by default, D3D12 with --d3d12), suggests
+// bindings and attaches an action set (so the layer's merge paths run), then
+// clears each eye to an animated color in a standard frame loop. An optional
+// sinusoidal CPU sleep gives the frametime graph something to show.
 //
-// Usage: flipfps_testapp [seconds] [--no-wobble]
+// Usage: flipfps_testapp [seconds] [--d3d12] [--no-wobble]
 #include <windows.h>
 
 #include <d3d11.h>
+#include <d3d12.h>
 #include <dxgi.h>
 #include <wrl/client.h>
 
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
+#define XR_USE_GRAPHICS_API_D3D12
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
@@ -41,8 +43,10 @@ struct ViewTarget {
     XrSwapchain swapchain{XR_NULL_HANDLE};
     int32_t width{};
     int32_t height{};
-    std::vector<XrSwapchainImageD3D11KHR> images;
-    std::map<ID3D11Texture2D*, ComPtr<ID3D11RenderTargetView>> rtvs;
+    std::vector<XrSwapchainImageD3D11KHR> images11;
+    std::map<ID3D11Texture2D*, ComPtr<ID3D11RenderTargetView>> rtvs11;
+    std::vector<XrSwapchainImageD3D12KHR> images12;
+    ComPtr<ID3D12DescriptorHeap> rtv_heap12;
 };
 
 } // namespace
@@ -50,16 +54,20 @@ struct ViewTarget {
 int main(int argc, char** argv) {
     int run_seconds = 120;
     bool wobble = true;
+    bool use_d3d12 = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-wobble") == 0) {
             wobble = false;
+        } else if (std::strcmp(argv[i], "--d3d12") == 0) {
+            use_d3d12 = true;
         } else {
             run_seconds = std::atoi(argv[i]);
         }
     }
 
     // --- Instance ---
-    std::vector<const char*> extensions{XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+    std::vector<const char*> extensions{use_d3d12 ? XR_KHR_D3D12_ENABLE_EXTENSION_NAME
+                                                  : XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
 
     // Opt into Meta XR Operator's automation extension when a layer offers it,
     // so tests can drive controller poses programmatically.
@@ -87,35 +95,89 @@ int main(int argc, char** argv) {
 
     XrInstanceProperties iprops{XR_TYPE_INSTANCE_PROPERTIES};
     xrGetInstanceProperties(instance, &iprops);
-    std::printf("runtime: %s\n", iprops.runtimeName);
+    std::printf("runtime: %s, gfx: %s\n", iprops.runtimeName, use_d3d12 ? "d3d12" : "d3d11");
 
     XrSystemGetInfo sgi{XR_TYPE_SYSTEM_GET_INFO};
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system{XR_NULL_SYSTEM_ID};
     CHECK_XR(xrGetSystem(instance, &sgi, &system));
 
-    // --- D3D11 device on the runtime's adapter ---
-    PFN_xrGetD3D11GraphicsRequirementsKHR get_reqs = nullptr;
-    CHECK_XR(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
-                                   (PFN_xrVoidFunction*)&get_reqs));
-    XrGraphicsRequirementsD3D11KHR reqs{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
-    CHECK_XR(get_reqs(instance, system, &reqs));
+    // --- Graphics device ---
+    ComPtr<ID3D11Device> device11;
+    ComPtr<ID3D11DeviceContext> context11;
+    ComPtr<ID3D12Device> device12;
+    ComPtr<ID3D12CommandQueue> queue12;
+    ComPtr<ID3D12CommandAllocator> allocator12;
+    ComPtr<ID3D12GraphicsCommandList> list12;
+    ComPtr<ID3D12Fence> fence12;
+    uint64_t fence_value12 = 0;
+    HANDLE fence_event12 = nullptr;
 
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> context;
-    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, 2,
-                                 D3D11_SDK_VERSION, &device, nullptr, &context))) {
-        std::printf("D3D11CreateDevice failed\n");
-        return 1;
+    XrGraphicsBindingD3D11KHR binding11{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
+    XrGraphicsBindingD3D12KHR binding12{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR};
+    XrSessionCreateInfo sci{XR_TYPE_SESSION_CREATE_INFO};
+    sci.systemId = system;
+
+    if (use_d3d12) {
+        PFN_xrGetD3D12GraphicsRequirementsKHR get_reqs = nullptr;
+        CHECK_XR(xrGetInstanceProcAddr(instance, "xrGetD3D12GraphicsRequirementsKHR",
+                                       (PFN_xrVoidFunction*)&get_reqs));
+        XrGraphicsRequirementsD3D12KHR reqs{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR};
+        CHECK_XR(get_reqs(instance, system, &reqs));
+
+        // Create the device on the adapter the runtime asked for (never the
+        // default: on machines with virtual display adapters that picks the
+        // wrong one and the runtime's resource sharing fails).
+        ComPtr<IDXGIFactory1> factory;
+        CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+        ComPtr<IDXGIAdapter1> adapter;
+        for (UINT a = 0; factory->EnumAdapters1(a, &adapter) == S_OK; ++a) {
+            DXGI_ADAPTER_DESC1 desc{};
+            adapter->GetDesc1(&desc);
+            if (desc.AdapterLuid.LowPart == reqs.adapterLuid.LowPart &&
+                desc.AdapterLuid.HighPart == reqs.adapterLuid.HighPart) {
+                std::wprintf(L"using adapter: %s\n", desc.Description);
+                break;
+            }
+            adapter.Reset();
+        }
+        if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)))) {
+            std::printf("D3D12CreateDevice failed\n");
+            return 1;
+        }
+        D3D12_COMMAND_QUEUE_DESC qd{};
+        qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        if (FAILED(device12->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue12)))) {
+            std::printf("CreateCommandQueue failed\n");
+            return 1;
+        }
+        device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator12));
+        device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator12.Get(), nullptr,
+                                    IID_PPV_ARGS(&list12));
+        list12->Close();
+        device12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence12));
+        fence_event12 = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+
+        binding12.device = device12.Get();
+        binding12.queue = queue12.Get();
+        sci.next = &binding12;
+    } else {
+        PFN_xrGetD3D11GraphicsRequirementsKHR get_reqs = nullptr;
+        CHECK_XR(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
+                                       (PFN_xrVoidFunction*)&get_reqs));
+        XrGraphicsRequirementsD3D11KHR reqs{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
+        CHECK_XR(get_reqs(instance, system, &reqs));
+
+        const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, 2,
+                                     D3D11_SDK_VERSION, &device11, nullptr, &context11))) {
+            std::printf("D3D11CreateDevice failed\n");
+            return 1;
+        }
+        binding11.device = device11.Get();
+        sci.next = &binding11;
     }
 
-    // --- Session ---
-    XrGraphicsBindingD3D11KHR binding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
-    binding.device = device.Get();
-    XrSessionCreateInfo sci{XR_TYPE_SESSION_CREATE_INFO};
-    sci.next = &binding;
-    sci.systemId = system;
     XrSession session{XR_NULL_HANDLE};
     CHECK_XR(xrCreateSession(instance, &sci, &session));
 
@@ -190,6 +252,9 @@ int main(int argc, char** argv) {
         }
     }
 
+    const UINT rtv_stride =
+        use_d3d12 ? device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) : 0;
+
     std::vector<ViewTarget> targets(view_count);
     for (uint32_t i = 0; i < view_count; ++i) {
         XrSwapchainCreateInfo sc{XR_TYPE_SWAPCHAIN_CREATE_INFO};
@@ -207,9 +272,26 @@ int main(int argc, char** argv) {
 
         uint32_t image_count = 0;
         xrEnumerateSwapchainImages(targets[i].swapchain, 0, &image_count, nullptr);
-        targets[i].images.resize(image_count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
-        xrEnumerateSwapchainImages(targets[i].swapchain, image_count, &image_count,
-                                   (XrSwapchainImageBaseHeader*)targets[i].images.data());
+        if (use_d3d12) {
+            targets[i].images12.resize(image_count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+            xrEnumerateSwapchainImages(targets[i].swapchain, image_count, &image_count,
+                                       (XrSwapchainImageBaseHeader*)targets[i].images12.data());
+
+            D3D12_DESCRIPTOR_HEAP_DESC hd{};
+            hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            hd.NumDescriptors = image_count;
+            device12->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&targets[i].rtv_heap12));
+            D3D12_CPU_DESCRIPTOR_HANDLE handle =
+                targets[i].rtv_heap12->GetCPUDescriptorHandleForHeapStart();
+            for (uint32_t j = 0; j < image_count; ++j) {
+                device12->CreateRenderTargetView(targets[i].images12[j].texture, nullptr, handle);
+                handle.ptr += rtv_stride;
+            }
+        } else {
+            targets[i].images11.resize(image_count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+            xrEnumerateSwapchainImages(targets[i].swapchain, image_count, &image_count,
+                                       (XrSwapchainImageBaseHeader*)targets[i].images11.data());
+        }
     }
     std::printf("%u views, %dx%d, format %lld\n", view_count, targets[0].width, targets[0].height,
                 (long long)color_format);
@@ -284,6 +366,11 @@ int main(int argc, char** argv) {
             uint32_t located = 0;
             xrLocateViews(session, &vli, &view_state, view_count, &located, views.data());
 
+            const float phase = (float)frame_index * 0.01f;
+            const float color[4] = {0.30f + 0.15f * std::sin(phase),
+                                    0.45f + 0.15f * std::sin(phase * 1.3f + 2.0f),
+                                    0.65f + 0.15f * std::sin(phase * 0.7f + 4.0f), 1.0f};
+
             proj_views.resize(view_count, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
             for (uint32_t i = 0; i < view_count; ++i) {
                 ViewTarget& target = targets[i];
@@ -294,16 +381,43 @@ int main(int argc, char** argv) {
                 image_wait.timeout = XR_INFINITE_DURATION;
                 xrWaitSwapchainImage(target.swapchain, &image_wait);
 
-                ID3D11Texture2D* tex = target.images[image_index].texture;
-                auto& rtv = target.rtvs[tex];
-                if (!rtv) {
-                    device->CreateRenderTargetView(tex, nullptr, &rtv);
+                if (use_d3d12) {
+                    allocator12->Reset();
+                    list12->Reset(allocator12.Get(), nullptr);
+
+                    ID3D12Resource* tex = target.images12[image_index].texture;
+                    D3D12_RESOURCE_BARRIER barrier{};
+                    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                    barrier.Transition.pResource = tex;
+                    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+                    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+                    list12->ResourceBarrier(1, &barrier);
+
+                    D3D12_CPU_DESCRIPTOR_HANDLE rtv =
+                        target.rtv_heap12->GetCPUDescriptorHandleForHeapStart();
+                    rtv.ptr += (SIZE_T)image_index * rtv_stride;
+                    list12->ClearRenderTargetView(rtv, color, 0, nullptr);
+
+                    std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+                    list12->ResourceBarrier(1, &barrier);
+                    list12->Close();
+
+                    ID3D12CommandList* lists[] = {list12.Get()};
+                    queue12->ExecuteCommandLists(1, lists);
+                    queue12->Signal(fence12.Get(), ++fence_value12);
+                    if (fence12->GetCompletedValue() < fence_value12) {
+                        fence12->SetEventOnCompletion(fence_value12, fence_event12);
+                        WaitForSingleObject(fence_event12, 100);
+                    }
+                } else {
+                    ID3D11Texture2D* tex = target.images11[image_index].texture;
+                    auto& rtv = target.rtvs11[tex];
+                    if (!rtv) {
+                        device11->CreateRenderTargetView(tex, nullptr, &rtv);
+                    }
+                    context11->ClearRenderTargetView(rtv.Get(), color);
                 }
-                const float phase = (float)frame_index * 0.01f;
-                const float color[4] = {0.30f + 0.15f * std::sin(phase),
-                                        0.45f + 0.15f * std::sin(phase * 1.3f + 2.0f),
-                                        0.65f + 0.15f * std::sin(phase * 0.7f + 4.0f), 1.0f};
-                context->ClearRenderTargetView(rtv.Get(), color);
 
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                 xrReleaseSwapchainImage(target.swapchain, &release);
@@ -333,6 +447,9 @@ int main(int argc, char** argv) {
     }
 
     std::printf("shutting down after %llu frames\n", (unsigned long long)frame_index);
+    if (fence_event12 != nullptr) {
+        CloseHandle(fence_event12);
+    }
     for (ViewTarget& target : targets) {
         if (target.swapchain != XR_NULL_HANDLE) {
             xrDestroySwapchain(target.swapchain);

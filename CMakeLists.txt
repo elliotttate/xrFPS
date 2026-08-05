@@ -66,7 +66,7 @@ if(FLIPFPS_BUILD_TESTAPP)
     if(TARGET openxr_loader)
         add_executable(flipfps_testapp test/xr_test_app.cpp)
         target_include_directories(flipfps_testapp PRIVATE "${FLIPFPS_OPENXR_INCLUDE}")
-        target_link_libraries(flipfps_testapp PRIVATE openxr_loader d3d11 dxgi)
+        target_link_libraries(flipfps_testapp PRIVATE openxr_loader d3d11 d3d12 dxgi)
         target_compile_definitions(flipfps_testapp PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
         # The SDK loader builds with the dynamic CRT; match it here (the layer
         # itself stays static-CRT).
