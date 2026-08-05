@@ -400,8 +400,25 @@ void session_destroy(Session* s) {
 }
 
 void session_note_display_period(Session* s, XrDuration period_ns) {
-    if (period_ns > 0) {
-        s->stats.target_ms = (float)((double)period_ns / 1e6);
+    if (period_ns <= 0) {
+        return;
+    }
+    const float ms = (float)((double)period_ns / 1e6);
+    s->period_window_ms[s->period_index] = ms;
+    s->period_index = (s->period_index + 1) % Session::kPeriodWindow;
+    if (s->period_count < Session::kPeriodWindow) {
+        ++s->period_count;
+    }
+
+    // The display cannot refresh slower than its true period; shorter values
+    // are half-frame reporting artifacts. Adopt the recent max, with a small
+    // hysteresis so the HUD's colors and graph scale never flicker.
+    float max_ms = 0.0f;
+    for (int i = 0; i < s->period_count; ++i) {
+        max_ms = std::max(max_ms, s->period_window_ms[i]);
+    }
+    if (s->stats.target_ms <= 0.5f || std::fabs(max_ms - s->stats.target_ms) > s->stats.target_ms * 0.05f) {
+        s->stats.target_ms = max_ms;
     }
 }
 

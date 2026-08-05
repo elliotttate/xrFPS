@@ -88,6 +88,13 @@ struct Session {
     double last_end_frame_qpc_ms{0.0};
     double last_upload_qpc_ms{0.0};
 
+    // Recent xrWaitFrame display periods; the HUD target is their max, since
+    // some runtimes (VDXR under SSW) alternate half-periods frame to frame.
+    static constexpr int kPeriodWindow = 90;
+    float period_window_ms[kPeriodWindow]{};
+    int period_index{0};
+    int period_count{0};
+
     // Gesture state.
     bool visible{false};
     bool force_show{false};
