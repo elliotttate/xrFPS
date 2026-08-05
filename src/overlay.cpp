@@ -219,6 +219,25 @@ bool update_content(Session* s) {
 void update_gesture(Session* s, XrTime display_time) {
     const double now = qpc_ms();
 
+    // Optional test pose injection for the left hand (see overlay.h).
+    if (!s->test_pose_env_checked) {
+        s->test_pose_env_checked = true;
+        char value[8]{};
+        s->test_pose_env =
+            GetEnvironmentVariableA("FLIPFPS_TEST_POSE", value, sizeof(value)) > 0 && value[0] == '1';
+        if (s->test_pose_env) {
+            flog("test pose injection enabled; waiting for shared memory");
+        }
+    }
+    if (s->test_pose_env && s->test_pose_view == nullptr) {
+        s->test_pose_mapping = OpenFileMappingA(FILE_MAP_READ, FALSE, "Local\\FlipFPS_TestPose");
+        if (s->test_pose_mapping != nullptr) {
+            s->test_pose_view =
+                (const volatile float*)MapViewOfFile(s->test_pose_mapping, FILE_MAP_READ, 0, 0, 0);
+            flog("test pose shared memory connected");
+        }
+    }
+
     bool flipped = false;
     XrPosef grip_pose[2];
     bool grip_valid[2]{false, false};
@@ -237,8 +256,20 @@ void update_gesture(Session* s, XrTime display_time) {
         }
         grip_pose[hand] = loc.pose;
         grip_valid[hand] = true;
+    }
 
-        const V3 up = rotate(loc.pose.orientation, {0.0f, 1.0f, 0.0f});
+    if (s->test_pose_view != nullptr && s->test_pose_view[0] == 1.0f) {
+        grip_pose[0].position = {s->test_pose_view[1], s->test_pose_view[2], s->test_pose_view[3]};
+        grip_pose[0].orientation = {s->test_pose_view[4], s->test_pose_view[5], s->test_pose_view[6],
+                                    s->test_pose_view[7]};
+        grip_valid[0] = true;
+    }
+
+    for (int hand = 0; hand < 2; ++hand) {
+        if (!grip_valid[hand]) {
+            continue;
+        }
+        const V3 up = rotate(grip_pose[hand].orientation, {0.0f, 1.0f, 0.0f});
         if (!flipped && up.y < kFlipUpY) {
             flipped = true;
             s->anchor_hand = hand;
@@ -346,6 +377,12 @@ void session_destroy(Session* s) {
         if (sp != XR_NULL_HANDLE) {
             s->fns->destroySpace(sp);
         }
+    }
+    if (s->test_pose_view != nullptr) {
+        UnmapViewOfFile((const void*)s->test_pose_view);
+    }
+    if (s->test_pose_mapping != nullptr) {
+        CloseHandle(s->test_pose_mapping);
     }
     delete s;
 }

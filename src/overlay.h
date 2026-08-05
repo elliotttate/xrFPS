@@ -97,6 +97,14 @@ struct Session {
     XrPosef anchor_pose{{0, 0, 0, 1}, {0, 0, 0}};
     bool anchor_valid{false};
 
+    // Test pose injection (FLIPFPS_TEST_POSE=1): a shared-memory grip pose
+    // replaces the left controller for automated testing on runtimes without
+    // drivable tracking. Layout: float[8] = {active, px, py, pz, qx, qy, qz, qw}.
+    bool test_pose_env{false};
+    bool test_pose_env_checked{false};
+    HANDLE test_pose_mapping{};
+    const volatile float* test_pose_view{};
+
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};
     XrCompositionLayerQuad quad{};

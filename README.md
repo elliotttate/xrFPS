@@ -55,11 +55,19 @@ Targets:
 - `XrApiLayer_flipfps` — the layer DLL + manifest.
 - `flipfps_hudtest` — renders the HUD to a BMP for quick visual iteration,
   no headset required.
-- `flipfps_testapp` — a minimal OpenXR D3D11 app (clears the view, suggests
-  bindings, attaches an action set, runs the frame loop) for exercising the
-  layer end-to-end, e.g. against [Meta XR Simulator]. It opts into Meta XR
+- `flipfps_testapp` — a minimal OpenXR app (D3D11 by default, `--d3d12` for
+  D3D12) that clears the view, suggests bindings, attaches an action set, and
+  runs the frame loop, for exercising the layer end-to-end — e.g. against
+  [Meta XR Simulator] or SteamVR's headless null driver. It opts into Meta XR
   Operator's automation extension when present, so controller flips can be
   driven programmatically in tests.
+
+For runtimes without drivable tracking, setting `FLIPFPS_TEST_POSE=1` makes
+the layer accept a left-grip pose from shared memory
+(`Local\FlipFPS_TestPose`, `float[8] = {active, px, py, pz, qx, qy, qz, qw}`)
+in place of `xrLocateSpace` — `test/Drive-TestPose-Figure8.ps1` uses it to
+sweep the flipped controller through a smooth figure-8 for verifying the
+rigid HUD attachment.
 
 [Meta XR Simulator]: https://developers.meta.com/horizon/documentation/native/xrsim-intro/
 
