@@ -1,10 +1,10 @@
-// Minimal OpenXR test app for exercising the FlipFPS layer without a full
+// Minimal OpenXR test app for exercising the xrFPS layer without a full
 // game: creates a session (D3D11 by default, D3D12 with --d3d12), suggests
 // bindings and attaches an action set (so the layer's merge paths run), then
 // clears each eye to an animated color in a standard frame loop. An optional
 // sinusoidal CPU sleep gives the frametime graph something to show.
 //
-// Usage: flipfps_testapp [seconds] [--d3d12] [--debuglayer] [--no-wobble]
+// Usage: xrfps_testapp [seconds] [--d3d12] [--debuglayer] [--no-wobble]
 #include <windows.h>
 
 #include <d3d11.h>
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     }
 
     XrInstanceCreateInfo ici{XR_TYPE_INSTANCE_CREATE_INFO};
-    std::strcpy(ici.applicationInfo.applicationName, "FlipFPS Test App");
+    std::strcpy(ici.applicationInfo.applicationName, "xrFPS Test App");
     ici.applicationInfo.applicationVersion = 1;
     std::strcpy(ici.applicationInfo.engineName, "none");
     ici.applicationInfo.apiVersion = XR_API_VERSION_1_0;

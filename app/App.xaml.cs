@@ -1,6 +1,6 @@
 using Microsoft.UI.Xaml;
 
-namespace FlipFPS.ControlCenter;
+namespace xrFPS.ControlCenter;
 
 public partial class App : Application
 {

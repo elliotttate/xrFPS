@@ -13,5 +13,5 @@ constexpr int HUD_H = 256;
 // bytes. Straight (unpremultiplied) alpha; `bgra` selects byte order to match
 // the swapchain format. `metrics` may be null when the collector isn't
 // running — those rows are then skipped.
-void hud_render(uint8_t* out, const FrameStats& stats, const flipfps::Config& config,
-                const flipfps::SharedMetrics* metrics, bool bgra);
+void hud_render(uint8_t* out, const FrameStats& stats, const xrfps::Config& config,
+                const xrfps::SharedMetrics* metrics, bool bgra);

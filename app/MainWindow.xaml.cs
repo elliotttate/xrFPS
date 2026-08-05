@@ -1,29 +1,37 @@
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
+using xrFPS.ControlCenter.Services;
 using Path = System.IO.Path;
 
-namespace FlipFPS.ControlCenter;
+namespace xrFPS.ControlCenter;
 
 public sealed partial class MainWindow : Window
 {
     private NativeConfig _config;
     private bool _loading = true;
+    private bool _syncingPreviewRate;
+    private bool _installBusy;
     private readonly DispatcherQueueTimer _saveTimer;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly Services.AppUpdateService _updates = new();
+    private readonly object _metricsGate = new();
     private Task? _sampler;
     private readonly WriteableBitmap _preview;
     private readonly byte[] _previewPixels;
     private readonly int _hudW;
     private readonly int _hudH;
-    private Button[] _navButtons = Array.Empty<Button>();
+    private float _previewTargetMs = 1000.0f / 90.0f;
+    private NavigationViewItem[] _navItems = Array.Empty<NavigationViewItem>();
     private StackPanel[] _pages = Array.Empty<StackPanel>();
+    private ComboBox[] _previewRateCombos = Array.Empty<ComboBox>();
+
+    private static readonly int[] PreviewRates = { 72, 80, 90, 120, 144 };
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -32,58 +40,95 @@ public sealed partial class MainWindow : Window
     {
         ("OVERLAY", "Dashboard", "Flip a controller upside down to see your frame rate in any OpenXR game."),
         ("OVERLAY", "Gesture", "Choose which controller summons the HUD and how deliberate the flip must be."),
-        ("OVERLAY", "Placement & look", "Where the panel sits on the controller, and how it is drawn."),
-        ("OVERLAY", "Readouts", "Pick exactly which numbers appear on the panel."),
-        ("SETUP", "Installation", "Register FlipFPS with the OpenXR loader for your user account."),
+        ("OVERLAY", "Placement & look", "Control where the HUD sits and how it appears in the headset."),
+        ("OVERLAY", "Readouts", "Choose the frame statistics and system metrics shown on the HUD."),
+        ("SETUP", "Installation", "Install, repair, or remove the per-user OpenXR API layer."),
     };
 
     public MainWindow()
     {
         InitializeComponent();
-        Title = "FlipFPS Control Center";
+        Title = "xrFPS Control Center";
         ExtendsContentIntoTitleBar = true;
 
-        // AppWindow works in physical pixels while the layout is in DIPs, so
-        // the requested size has to be scaled or the content is cramped on a
-        // high-DPI display.
+        // AppWindow sizes are physical pixels while XAML uses DIPs.
         IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        double scale = GetDpiForWindow(hwnd) / 96.0;
+        double scale = Math.Max(1.0, GetDpiForWindow(hwnd) / 96.0);
         AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1320 * scale), (int)(880 * scale)));
+        try
+        {
+            string icon = Path.Combine(AppContext.BaseDirectory, "Assets", "xrFPS.ico");
+            if (File.Exists(icon))
+            {
+                AppWindow.SetIcon(icon);
+            }
+        }
+        catch
+        {
+            // An embedded executable icon still provides taskbar branding.
+        }
 
-        _hudW = Native.flipfps_hud_width();
-        _hudH = Native.flipfps_hud_height();
+        _hudW = Native.xrfps_hud_width();
+        _hudH = Native.xrfps_hud_height();
         _previewPixels = new byte[_hudW * _hudH * 4];
         _preview = new WriteableBitmap(_hudW, _hudH);
         PreviewImage.Source = _preview;
         PreviewImage2.Source = _preview;
         PreviewImage3.Source = _preview;
 
-        _navButtons = new[] { NavDashboard, NavGesture, NavAppearance, NavReadouts, NavInstall };
+        _navItems = new[] { NavDashboard, NavGesture, NavAppearance, NavReadouts, NavInstall };
         _pages = new[] { PageDashboard, PageGesture, PageAppearance, PageReadouts, PageInstall };
+        _previewRateCombos = new[] { PreviewRateCombo1, PreviewRateCombo2, PreviewRateCombo3 };
+        _syncingPreviewRate = true;
+        foreach (ComboBox combo in _previewRateCombos)
+        {
+            combo.SelectedIndex = 2;
+        }
+        _syncingPreviewRate = false;
 
-        Native.flipfps_config_load(out _config);
+        Native.xrfps_config_load(out _config);
         ApplyConfigToControls();
-        Native.flipfps_metrics_start();
+        lock (_metricsGate)
+        {
+            Native.xrfps_metrics_start();
+        }
 
-        var queue = DispatcherQueue.GetForCurrentThread();
+        DispatcherQueue queue = DispatcherQueue.GetForCurrentThread();
 
-        // Coalesce slider drags into one write; the layer polls this file.
+        // Coalesce slider drags into one atomic config write.
         _saveTimer = queue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(400);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += (_, _) => Native.flipfps_config_save(ref _config);
+        _saveTimer.Tick += (_, _) =>
+        {
+            if (Native.xrfps_config_save(ref _config) == 0)
+            {
+                ShowAction("Settings were not saved", "Check that the xrFPS settings folder is writable.",
+                           InfoBarSeverity.Error);
+            }
+        };
 
-        // Sampling touches performance counters and can block for a while, so
-        // it runs on a worker and only the display update returns to the UI.
+        // PDH/NVML calls can block, so all sampling stays off the UI thread.
         _sampler = Task.Run(async () =>
         {
             while (!_shutdown.IsCancellationRequested)
             {
-                Native.flipfps_metrics_sample();
-                Native.flipfps_metrics_get(out NativeMetrics metrics);
-                var status = new StringBuilder(128);
-                Native.flipfps_metrics_status(status, status.Capacity);
-                queue.TryEnqueue(() => ShowMetrics(metrics, status.ToString()));
+                NativeMetrics metrics;
+                string status;
+                lock (_metricsGate)
+                {
+                    if (_shutdown.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    Native.xrfps_metrics_sample();
+                    Native.xrfps_metrics_get(out metrics);
+                    var text = new StringBuilder(128);
+                    Native.xrfps_metrics_status(text, text.Capacity);
+                    status = text.ToString();
+                }
+                queue.TryEnqueue(() => ShowMetrics(metrics, status));
+
                 try
                 {
                     await Task.Delay(500, _shutdown.Token);
@@ -98,20 +143,36 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _shutdown.Cancel();
-            Native.flipfps_config_save(ref _config);
-            Native.flipfps_metrics_stop();
+            Native.xrfps_config_save(ref _config);
+            lock (_metricsGate)
+            {
+                Native.xrfps_metrics_stop();
+            }
         };
 
+        MainNavigation.SelectedItem = NavDashboard;
         SelectPage(0);
         RefreshStatus();
         RenderPreview();
+
+        VersionText.Text = $"You are running xrFPS {Services.AppUpdateService.CurrentVersion}.";
+
+        // One quiet check per launch, after the window is up.
+        Activated += MainWindow_FirstActivated;
     }
 
-    // ---- navigation -------------------------------------------------
-
-    private void Nav_Click(object sender, RoutedEventArgs e)
+    private async void MainWindow_FirstActivated(object sender, WindowActivatedEventArgs args)
     {
-        if (sender is Button b && int.TryParse(b.Tag?.ToString(), out int index))
+        Activated -= MainWindow_FirstActivated;
+        await CheckForUpdatesAsync(userInitiated: false);
+    }
+
+    // ---- navigation and responsive layout ---------------------------
+
+    private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItemContainer is NavigationViewItem item &&
+            int.TryParse(item.Tag?.ToString(), out int index))
         {
             SelectPage(index);
         }
@@ -119,19 +180,48 @@ public sealed partial class MainWindow : Window
 
     private void SelectPage(int index)
     {
+        if (index < 0 || index >= _pages.Length)
+        {
+            return;
+        }
         for (int i = 0; i < _pages.Length; ++i)
         {
             _pages[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
-            _navButtons[i].Background = i == index
-                ? new SolidColorBrush(Color.FromArgb(0x24, 0x56, 0xCF, 0x85))
-                : new SolidColorBrush(Colors.Transparent);
-            _navButtons[i].Foreground = i == index
-                ? new SolidColorBrush(Colors.White)
-                : (SolidColorBrush)Application.Current.Resources["MutedTextBrush"];
         }
         PageEyebrow.Text = PageInfo[index].Eyebrow;
         PageTitle.Text = PageInfo[index].Title;
         PageSubtitle.Text = PageInfo[index].Subtitle;
+    }
+
+    private void RootGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        bool useSidePreview = e.NewSize.Width >= 1040;
+        SetPreviewLayout(DashboardTopGrid, DashboardPreviewCard, useSidePreview);
+        SetPreviewLayout(AppearanceGrid, AppearancePreviewCard, useSidePreview);
+        SetPreviewLayout(ReadoutsGrid, ReadoutsPreviewCard, useSidePreview);
+
+        int metricColumns = e.NewSize.Width >= 940 ? 5 : e.NewSize.Width >= 620 ? 3 : 2;
+        FrameworkElement[] tiles = { MetricCpu, MetricGpu, MetricVram, MetricTemp, MetricApp };
+        for (int i = 0; i < MetricTiles.ColumnDefinitions.Count; ++i)
+        {
+            MetricTiles.ColumnDefinitions[i].Width = i < metricColumns
+                ? new GridLength(1, GridUnitType.Star)
+                : new GridLength(0);
+        }
+        for (int i = 0; i < tiles.Length; ++i)
+        {
+            Grid.SetColumn(tiles[i], i % metricColumns);
+            Grid.SetRow(tiles[i], i / metricColumns);
+        }
+    }
+
+    private static void SetPreviewLayout(Grid grid, FrameworkElement preview, bool sideBySide)
+    {
+        grid.ColumnDefinitions[1].Width = sideBySide ? new GridLength(330) : new GridLength(0);
+        Grid.SetColumn(preview, sideBySide ? 1 : 0);
+        Grid.SetRow(preview, sideBySide ? 0 : 1);
+        preview.MaxWidth = sideBySide ? 330 : double.PositiveInfinity;
+        preview.HorizontalAlignment = HorizontalAlignment.Stretch;
     }
 
     // ---- config <-> controls ---------------------------------------
@@ -214,34 +304,72 @@ public sealed partial class MainWindow : Window
 
     private void UpdateValueLabels()
     {
-        FlipAngleLabel.Text = $"Flip angle — {_config.FlipAngleDeg:0} degrees past upright";
+        FlipAngleLabel.Text = $"Flip angle — {_config.FlipAngleDeg:0}° from upright";
         ShowDelayLabel.Text = $"Show delay — {_config.ShowDelaySec:0.00} s";
         HideDelayLabel.Text = $"Hide delay — {_config.HideDelaySec:0.00} s";
-        PanelWidthLabel.Text = $"Panel width — {_config.PanelWidthM:0.00} m";
-        PanelOffsetLabel.Text = $"Distance from controller — {_config.PanelOffsetM:0.00} m";
-        PanelRollLabel.Text = $"Roll — {_config.PanelRollDeg:0} degrees";
-        OpacityLabel.Text = $"Opacity — {_config.Opacity * 100:0} %";
+        PanelWidthLabel.Text = $"Panel width — {_config.PanelWidthM * 100:0} cm";
+        PanelOffsetLabel.Text = $"Distance from controller — {_config.PanelOffsetM * 100:0} cm";
+        PanelRollLabel.Text = $"Roll — {_config.PanelRollDeg:0}°";
+        OpacityLabel.Text = $"Opacity — {_config.Opacity * 100:0}%";
         RefreshLabel.Text = $"HUD refresh — {_config.HudRefreshHz:0.0} Hz";
     }
 
-    // ---- live loop --------------------------------------------------
+    // ---- live metrics and preview ----------------------------------
 
-    private void ShowMetrics(NativeMetrics m, string status)
+    private void ShowMetrics(NativeMetrics metrics, string status)
     {
-        TileCpu.Text = m.CpuUsagePct >= 0 ? $"{m.CpuUsagePct:0}%" : "--";
-        TileGpu.Text = m.GpuUsagePct >= 0 ? $"{m.GpuUsagePct:0}%" : "--";
-        TileVram.Text = m.VramUsedMb >= 0 ? $"{m.VramUsedMb / 1024f:0.0} GB" : "--";
-        TileTemp.Text = m.GpuTempC >= 0 ? $"{m.GpuTempC:0}°C" : "--";
-        TileApp.Text = m.AppPid != 0 ? m.AppName : "none detected";
+        if (_shutdown.IsCancellationRequested)
+        {
+            return;
+        }
+
+        TileCpu.Text = metrics.CpuUsagePct >= 0 ? $"{metrics.CpuUsagePct:0}%" : "--";
+        TileGpu.Text = metrics.GpuUsagePct >= 0 ? $"{metrics.GpuUsagePct:0}%" : "--";
+        TileVram.Text = metrics.VramUsedMb >= 0 ? $"{metrics.VramUsedMb / 1024f:0.0} GB" : "--";
+        TileTemp.Text = metrics.GpuTempC >= 0 ? $"{metrics.GpuTempC:0}°C" : "--";
+        TileApp.Text = metrics.AppPid != 0 ? metrics.AppName : "none detected";
         CollectorStatus.Text = status;
+
+        bool hasNvml = status.Contains("NVML", StringComparison.OrdinalIgnoreCase);
+        SetMetricAvailability(ShowVram, hasNvml, "VRAM", "VRAM (unavailable)");
+        SetMetricAvailability(ShowGpuClock, hasNvml, "GPU clock", "GPU clock (unavailable)");
+        SetMetricAvailability(ShowGpuTemp, hasNvml, "GPU temperature", "GPU temperature (unavailable)");
+        SetMetricAvailability(ShowCpuTemp, false, "CPU temperature", "CPU temperature (unavailable)");
+        MetricCapabilitySummary.Text = hasNvml
+            ? "PDH and NVIDIA NVML are available. Per-game GPU usage appears when an OpenXR app loads the layer; CPU temperature has no provider yet."
+            : "PDH is available. VRAM, GPU temperature, and GPU clock need an NVIDIA NVML provider; CPU temperature has no provider yet.";
+        RenderPreview();
+    }
+
+    private static void SetMetricAvailability(CheckBox box, bool available, string label, string unavailableLabel)
+    {
+        box.IsEnabled = available;
+        box.Content = available ? label : unavailableLabel;
+    }
+
+    private void PreviewRate_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingPreviewRate || sender is not ComboBox combo || combo.SelectedIndex < 0)
+        {
+            return;
+        }
+        int index = Math.Clamp(combo.SelectedIndex, 0, PreviewRates.Length - 1);
+        _syncingPreviewRate = true;
+        foreach (ComboBox other in _previewRateCombos)
+        {
+            other.SelectedIndex = index;
+        }
+        _syncingPreviewRate = false;
+        _previewTargetMs = 1000.0f / PreviewRates[index];
         RenderPreview();
     }
 
     private void RenderPreview()
     {
-        Native.flipfps_hud_render(ref _config, 1, 11.1f, _previewPixels);
-        // WriteableBitmap's buffer is BGRA8, which is what the native
-        // renderer produced, so this is a straight copy.
+        lock (_metricsGate)
+        {
+            Native.xrfps_hud_render(ref _config, 1, _previewTargetMs, _previewPixels);
+        }
         unsafe
         {
             var access = WinRT.CastExtensions.As<IBufferByteAccess>(_preview.PixelBuffer);
@@ -251,12 +379,12 @@ public sealed partial class MainWindow : Window
         _preview.Invalidate();
     }
 
-    // ---- install ----------------------------------------------------
+    // ---- install and reset actions ---------------------------------
 
     private void RefreshStatus()
     {
         var manifest = new StringBuilder(600);
-        int flags = Native.flipfps_status(manifest, manifest.Capacity);
+        int flags = Native.xrfps_status(manifest, manifest.Capacity);
         bool registered = (flags & 1) != 0;
         bool filesPresent = (flags & 2) != 0;
 
@@ -264,69 +392,150 @@ public sealed partial class MainWindow : Window
         var warn = (SolidColorBrush)Application.Current.Resources["WarnBrush"];
         var bad = (SolidColorBrush)Application.Current.Resources["BadBrush"];
 
+        Brush stateBrush;
+        string headline;
+        string detail;
+        string sidebarHint;
         if (registered && filesPresent)
         {
-            StatusDot.Fill = good;
-            StatusHeadline.Text = "Layer installed";
-            StatusDetail.Text = "Every OpenXR app you start from now on loads FlipFPS automatically.";
-            SidebarStatusText.Text = "Installed";
-            SidebarStatusText.Foreground = good;
-            SidebarHintText.Text = "Active for this user";
+            stateBrush = good;
+            headline = "Layer installed";
+            detail = "Every OpenXR app started from now on loads xrFPS automatically.";
+            sidebarHint = "Active for this user";
         }
         else if (registered)
         {
-            StatusDot.Fill = warn;
-            StatusHeadline.Text = "Registered, files missing";
-            StatusDetail.Text = "The registry points at a layer that is not on disk. Use Update files to repair it.";
-            SidebarStatusText.Text = "Needs repair";
-            SidebarStatusText.Foreground = warn;
-            SidebarHintText.Text = "Files missing";
+            stateBrush = warn;
+            headline = "Registered, files missing";
+            detail = "The registry points to files that are no longer on disk. Use Update files to repair the installation.";
+            sidebarHint = "Repair required";
         }
         else
         {
-            StatusDot.Fill = bad;
-            StatusHeadline.Text = "Not installed";
-            StatusDetail.Text = "Install the layer to have OpenXR games load FlipFPS. No administrator rights needed.";
-            SidebarStatusText.Text = "Not installed";
-            SidebarStatusText.Foreground = bad;
-            SidebarHintText.Text = "Press Install layer";
+            stateBrush = bad;
+            headline = "Not installed";
+            detail = "Install the layer to make it available to OpenXR apps. Administrator rights are not required.";
+            sidebarHint = "Installation required";
         }
 
-        InstallButton.Visibility = registered ? Visibility.Collapsed : Visibility.Visible;
-        UninstallButton.Visibility = registered ? Visibility.Visible : Visibility.Collapsed;
-        ReinstallButton.Visibility = registered ? Visibility.Visible : Visibility.Collapsed;
+        StatusDot.Fill = stateBrush;
+        SidebarStatusDot.Fill = stateBrush;
+        InstallPageStatusDot.Fill = stateBrush;
+        StatusHeadline.Text = headline;
+        InstallPageStatusHeadline.Text = headline;
+        StatusDetail.Text = detail;
+        InstallPageStatusDetail.Text = detail;
+        SidebarStatusText.Text = registered && filesPresent ? "Installed" : registered ? "Needs repair" : "Not installed";
+        SidebarStatusText.Foreground = stateBrush;
+        SidebarHintText.Text = sidebarHint;
 
+        SetInstallButtonVisibility(registered);
         ManifestPathText.Text = manifest.ToString();
         var configPath = new StringBuilder(600);
-        Native.flipfps_config_path(configPath, configPath.Capacity);
+        Native.xrfps_config_path(configPath, configPath.Capacity);
         ConfigPathText.Text = configPath.ToString();
     }
 
-    private void Install_Click(object sender, RoutedEventArgs e)
+    private void SetInstallButtonVisibility(bool registered)
     {
-        var error = new StringBuilder(600);
-        bool ok = Native.flipfps_install(error, error.Capacity) != 0;
-        ToastText.Text = ok
-            ? "Layer installed. Launch or relaunch an OpenXR game to load it."
-            : $"Install failed: {error}";
-        RefreshStatus();
+        foreach (Button button in new[] { InstallButton, InstallButton2 })
+        {
+            button.Visibility = registered ? Visibility.Collapsed : Visibility.Visible;
+        }
+        foreach (Button button in new[] { UninstallButton, UninstallButton2, ReinstallButton, ReinstallButton2 })
+        {
+            button.Visibility = registered ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
-    private void Uninstall_Click(object sender, RoutedEventArgs e)
+    private void SetInstallBusy(bool busy)
     {
-        var error = new StringBuilder(600);
-        bool ok = Native.flipfps_uninstall(error, error.Capacity) != 0;
-        ToastText.Text = ok ? "Layer uninstalled." : $"Uninstall failed: {error}";
-        RefreshStatus();
+        _installBusy = busy;
+        foreach (Button button in new[]
+                 {
+                     InstallButton, InstallButton2, UninstallButton, UninstallButton2,
+                     ReinstallButton, ReinstallButton2,
+                 })
+        {
+            button.IsEnabled = !busy;
+        }
     }
 
-    private void RestoreDefaults_Click(object sender, RoutedEventArgs e)
+    private async void Install_Click(object sender, RoutedEventArgs e)
     {
-        Native.flipfps_config_defaults(out _config);
+        if (_installBusy)
+        {
+            return;
+        }
+        bool updating = sender is Button button && button.Name.StartsWith("Reinstall", StringComparison.Ordinal);
+        SetInstallBusy(true);
+        ShowAction(updating ? "Updating layer files…" : "Installing layer…",
+                   "xrFPS is updating the per-user OpenXR registration.", InfoBarSeverity.Informational);
+        var error = new StringBuilder(600);
+        bool ok = await Task.Run(() => Native.xrfps_install(error, error.Capacity) != 0);
+        SetInstallBusy(false);
+        RefreshStatus();
+        ShowAction(ok ? (updating ? "Layer files updated" : "Layer installed") : "Installation failed",
+                   ok ? "Launch or relaunch an OpenXR app to load this build." : error.ToString(),
+                   ok ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+    }
+
+    private async void Uninstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (_installBusy)
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = "Uninstall the xrFPS layer?",
+            Content = "This removes the per-user OpenXR registration. Your settings remain on disk and you can reinstall at any time.",
+            PrimaryButtonText = "Uninstall",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        SetInstallBusy(true);
+        ShowAction("Uninstalling layer…", "Removing the per-user OpenXR registration.",
+                   InfoBarSeverity.Informational);
+        var error = new StringBuilder(600);
+        bool ok = await Task.Run(() => Native.xrfps_uninstall(error, error.Capacity) != 0);
+        SetInstallBusy(false);
+        RefreshStatus();
+        ShowAction(ok ? "Layer uninstalled" : "Uninstall failed",
+                   ok ? "OpenXR apps started later will no longer load xrFPS." : error.ToString(),
+                   ok ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+    }
+
+    private async void RestoreDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = "Restore all HUD settings?",
+            Content = "Gesture, placement, appearance, and readout choices will return to their defaults.",
+            PrimaryButtonText = "Restore defaults",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        Native.xrfps_config_defaults(out _config);
         ApplyConfigToControls();
-        Native.flipfps_config_save(ref _config);
+        bool saved = Native.xrfps_config_save(ref _config) != 0;
         RenderPreview();
-        ToastText.Text = "Settings restored to defaults.";
+        ShowAction(saved ? "Defaults restored" : "Defaults restored but not saved",
+                   saved ? "The running layer will pick up the reset automatically."
+                         : "Check that the xrFPS settings folder is writable.",
+                   saved ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -336,19 +545,138 @@ public sealed partial class MainWindow : Window
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir) { UseShellExecute = true });
         }
+        else
+        {
+            ShowAction("Folder not found", "Install the layer first to create its local folder.",
+                       InfoBarSeverity.Warning);
+        }
     }
 
     private void OpenLog_Click(object sender, RoutedEventArgs e)
     {
         string dir = Path.GetDirectoryName(ManifestPathText.Text) ?? "";
-        string log = Path.Combine(dir, "flipfps.log");
+        string log = Path.Combine(dir, "xrfps.log");
         if (File.Exists(log))
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(log) { UseShellExecute = true });
         }
         else
         {
-            ToastText.Text = "No log yet — it appears once a game has loaded the layer.";
+            ShowAction("No log yet", "The log appears after an OpenXR app loads the layer.",
+                       InfoBarSeverity.Informational);
         }
+    }
+
+    // ---- updates -----------------------------------------------------
+
+    private async Task CheckForUpdatesAsync(bool userInitiated)
+    {
+        if (userInitiated)
+        {
+            UpdateRing.IsActive = true;
+            CheckUpdateButton.IsEnabled = false;
+            UpdateStatusText.Text = "Checking…";
+        }
+
+        UpdateInfo? update = await _updates.CheckAsync(_shutdown.Token);
+
+        UpdateRing.IsActive = false;
+        CheckUpdateButton.IsEnabled = true;
+
+        if (update is null)
+        {
+            // A failed check (offline, rate-limited) must never nag; only a
+            // deliberate check reports that nothing was found.
+            UpdateStatusText.Text = userInitiated ? "You are on the latest version." : "";
+            return;
+        }
+
+        UpdateStatusText.Text = $"Version {update.Version} is available.";
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = $"Update available — {update.Name}",
+            PrimaryButtonText = "Update now",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary,
+            Content = new ScrollViewer
+            {
+                MaxHeight = 340,
+                Content = new StackPanel
+                {
+                    Spacing = 10,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = $"xrFPS {update.Version} is available. You have {AppUpdateService.CurrentVersion}.",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        new TextBlock
+                        {
+                            Text = update.Notes.Length > 1200 ? update.Notes[..1200] + "…" : update.Notes,
+                            TextWrapping = TextWrapping.Wrap,
+                            Opacity = 0.8,
+                        },
+                    },
+                },
+            },
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        UpdateRing.IsActive = true;
+        CheckUpdateButton.IsEnabled = false;
+        var progress = new Progress<double>(fraction =>
+            UpdateStatusText.Text = $"Downloading… {fraction * 100:0}%");
+
+        try
+        {
+            string? installer = await _updates.DownloadAsync(update, progress, _shutdown.Token);
+            if (installer is null)
+            {
+                UpdateStatusText.Text = "Download failed.";
+                ShowAction("Update failed", "The installer could not be downloaded. You can get it from GitHub Releases.",
+                           InfoBarSeverity.Error);
+                return;
+            }
+
+            if (AppUpdateService.StartUpdateAndRelaunch(installer))
+            {
+                UpdateStatusText.Text = "Installing…";
+                await Task.Delay(500);
+                Application.Current.Exit(); // setup replaces files this process holds
+            }
+            else
+            {
+                UpdateStatusText.Text = "The installer was not started.";
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = "Update failed.";
+            ShowAction("Update failed", ex.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            UpdateRing.IsActive = false;
+            CheckUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e) =>
+        await CheckForUpdatesAsync(userInitiated: true);
+
+    private void ShowAction(string title, string message, InfoBarSeverity severity)
+    {
+        ActionInfoBar.IsOpen = false;
+        ActionInfoBar.Title = title;
+        ActionInfoBar.Message = message;
+        ActionInfoBar.Severity = severity;
+        ActionInfoBar.IsOpen = true;
     }
 }

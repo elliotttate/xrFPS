@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace flipfps {
+namespace xrfps {
 
 // System metrics the layer cannot gather from inside a game process (GPU
 // utilization, VRAM, temperatures). The Control Center samples them with PDH
@@ -14,7 +14,7 @@ namespace flipfps {
 // number for one HUD refresh, so no locking is warranted.
 struct SharedMetrics {
     static constexpr uint32_t kMagic = 0x46465053; // 'FFPS'
-    static constexpr const char* kName = "Local\\FlipFPS_Metrics";
+    static constexpr const char* kName = "Local\\xrFPS_Metrics";
 
     uint32_t magic{kMagic};
     uint32_t version{1};
@@ -47,7 +47,7 @@ struct SharedMetrics {
 // Center never has to hunt for it by enumerating process modules.
 struct SharedSession {
     static constexpr uint32_t kMagic = 0x46535353; // 'FSSS'
-    static constexpr const char* kName = "Local\\FlipFPS_Session";
+    static constexpr const char* kName = "Local\\xrFPS_Session";
 
     uint32_t magic{kMagic};
     uint32_t pid{};
@@ -151,4 +151,4 @@ private:
     const SharedMetrics* view_{};
 };
 
-} // namespace flipfps
+} // namespace xrfps

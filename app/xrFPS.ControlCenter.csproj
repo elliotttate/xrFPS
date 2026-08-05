@@ -11,36 +11,43 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <Nullable>enable</Nullable>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>FlipFPS.ControlCenter</RootNamespace>
-    <AssemblyName>FlipFPS.ControlCenter</AssemblyName>
+    <RootNamespace>xrFPS.ControlCenter</RootNamespace>
+    <AssemblyName>xrFPS.ControlCenter</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\xrFPS.ico</ApplicationIcon>
     <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="Assets\xrFPS.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260508005" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 
   <!-- The native core carries the real config, HUD renderer, installer and
        metrics collector; the app is its front end. -->
   <ItemGroup>
-    <None Include="..\build\Release\flipfps_core.dll" Condition="Exists('..\build\Release\flipfps_core.dll')">
-      <Link>flipfps_core.dll</Link>
+    <None Include="..\build\Release\xrfps_core.dll" Condition="Exists('..\build\Release\xrfps_core.dll')">
+      <Link>xrfps_core.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
-    <None Include="..\build\Release\XrApiLayer_flipfps.dll" Condition="Exists('..\build\Release\XrApiLayer_flipfps.dll')">
-      <Link>XrApiLayer_flipfps.dll</Link>
+    <None Include="..\build\Release\XrApiLayer_xrfps.dll" Condition="Exists('..\build\Release\XrApiLayer_xrfps.dll')">
+      <Link>XrApiLayer_xrfps.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
-    <None Include="..\manifest\XrApiLayer_flipfps.json">
-      <Link>XrApiLayer_flipfps.json</Link>
+    <None Include="..\manifest\XrApiLayer_xrfps.json">
+      <Link>XrApiLayer_xrfps.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>

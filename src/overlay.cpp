@@ -7,7 +7,7 @@
 #include "hud.h"
 #include "log.h"
 
-namespace flipfps {
+namespace xrfps {
 namespace {
 
 constexpr float kQuadAspect = (float)HUD_H / (float)HUD_W;
@@ -245,13 +245,13 @@ void update_gesture(Session* s, XrTime display_time) {
         s->test_pose_env_checked = true;
         char value[8]{};
         s->test_pose_env =
-            GetEnvironmentVariableA("FLIPFPS_TEST_POSE", value, sizeof(value)) > 0 && value[0] == '1';
+            GetEnvironmentVariableA("XRFPS_TEST_POSE", value, sizeof(value)) > 0 && value[0] == '1';
         if (s->test_pose_env) {
             flog("test pose injection enabled; waiting for shared memory");
         }
     }
     if (s->test_pose_env && s->test_pose_view == nullptr) {
-        s->test_pose_mapping = OpenFileMappingA(FILE_MAP_READ, FALSE, "Local\\FlipFPS_TestPose");
+        s->test_pose_mapping = OpenFileMappingA(FILE_MAP_READ, FALSE, "Local\\xrFPS_TestPose");
         if (s->test_pose_mapping != nullptr) {
             s->test_pose_view =
                 (const volatile float*)MapViewOfFile(s->test_pose_mapping, FILE_MAP_READ, 0, 0, 0);
@@ -514,4 +514,4 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     return s->fns->endFrame(s->session, &modified);
 }
 
-} // namespace flipfps
+} // namespace xrfps

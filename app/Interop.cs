@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 
-namespace FlipFPS.ControlCenter;
+namespace xrFPS.ControlCenter;
 
-// Flat mirror of FlipFpsConfigAbi in src/core_api.h. Field order and types
+// Flat mirror of XrFpsConfigAbi in src/core_api.h. Field order and types
 // must match exactly.
 [StructLayout(LayoutKind.Sequential)]
 public struct NativeConfig
@@ -70,51 +70,51 @@ internal unsafe interface IBufferByteAccess
 
 internal static class Native
 {
-    private const string Dll = "flipfps_core.dll";
+    private const string Dll = "xrfps_core.dll";
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void flipfps_config_defaults(out NativeConfig config);
+    public static extern void xrfps_config_defaults(out NativeConfig config);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int flipfps_config_load(out NativeConfig config);
+    public static extern int xrfps_config_load(out NativeConfig config);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int flipfps_config_save(ref NativeConfig config);
+    public static extern int xrfps_config_save(ref NativeConfig config);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern void flipfps_config_path(System.Text.StringBuilder buffer, int length);
+    public static extern void xrfps_config_path(System.Text.StringBuilder buffer, int length);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int flipfps_hud_width();
+    public static extern int xrfps_hud_width();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int flipfps_hud_height();
+    public static extern int xrfps_hud_height();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void flipfps_hud_render(ref NativeConfig config, int useLiveMetrics,
+    public static extern void xrfps_hud_render(ref NativeConfig config, int useLiveMetrics,
                                                  float previewTargetMs, byte[] outBgra);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern int flipfps_status(System.Text.StringBuilder manifestPath, int length);
+    public static extern int xrfps_status(System.Text.StringBuilder manifestPath, int length);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern int flipfps_install(System.Text.StringBuilder error, int length);
+    public static extern int xrfps_install(System.Text.StringBuilder error, int length);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern int flipfps_uninstall(System.Text.StringBuilder error, int length);
+    public static extern int xrfps_uninstall(System.Text.StringBuilder error, int length);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int flipfps_metrics_start();
+    public static extern int xrfps_metrics_start();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void flipfps_metrics_stop();
+    public static extern void xrfps_metrics_stop();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void flipfps_metrics_sample();
+    public static extern void xrfps_metrics_sample();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void flipfps_metrics_get(out NativeMetrics metrics);
+    public static extern void xrfps_metrics_get(out NativeMetrics metrics);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern void flipfps_metrics_status(System.Text.StringBuilder buffer, int length);
+    public static extern void xrfps_metrics_status(System.Text.StringBuilder buffer, int length);
 }

@@ -13,16 +13,16 @@ inline void flog(const char* fmt, ...) {
     va_end(args);
 
     char msg[1100];
-    snprintf(msg, sizeof(msg), "[FlipFPS] %s\n", line);
+    snprintf(msg, sizeof(msg), "[xrFPS] %s\n", line);
     OutputDebugStringA(msg);
 
     static FILE* file = [] {
         char path[MAX_PATH]{};
         if (GetEnvironmentVariableA("LOCALAPPDATA", path, sizeof(path)) > 0) {
             char full[MAX_PATH];
-            snprintf(full, sizeof(full), "%s\\FlipFPS", path);
+            snprintf(full, sizeof(full), "%s\\xrFPS", path);
             CreateDirectoryA(full, nullptr);
-            snprintf(full, sizeof(full), "%s\\FlipFPS\\flipfps.log", path);
+            snprintf(full, sizeof(full), "%s\\xrFPS\\xrfps.log", path);
             return fopen(full, "a");
         }
         return (FILE*)nullptr;

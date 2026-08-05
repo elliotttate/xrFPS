@@ -5,10 +5,10 @@
 // instead of reimplementing them.
 #include <stdint.h>
 
-#if defined(FLIPFPS_CORE_EXPORTS)
-#define FLIPFPS_API __declspec(dllexport)
+#if defined(XRFPS_CORE_EXPORTS)
+#define XRFPS_API __declspec(dllexport)
 #else
-#define FLIPFPS_API __declspec(dllimport)
+#define XRFPS_API __declspec(dllimport)
 #endif
 
 #ifdef __cplusplus
@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 // int32 rather than bool throughout: no ABI surprises when marshalling.
-typedef struct FlipFpsConfigAbi {
+typedef struct XrFpsConfigAbi {
     int32_t enabled;
     int32_t hand;
     float flip_angle_deg;
@@ -47,9 +47,9 @@ typedef struct FlipFpsConfigAbi {
     int32_t show_cpu_temp;
     int32_t show_gpu_clock;
     int32_t show_ram;
-} FlipFpsConfigAbi;
+} XrFpsConfigAbi;
 
-typedef struct FlipFpsMetricsAbi {
+typedef struct XrFpsMetricsAbi {
     float cpu_usage_pct;
     float gpu_usage_pct;
     float gpu_app_usage_pct;
@@ -63,34 +63,34 @@ typedef struct FlipFpsMetricsAbi {
     uint32_t app_pid;
     char app_name[64];
     int32_t running;
-} FlipFpsMetricsAbi;
+} XrFpsMetricsAbi;
 
 // --- configuration ---
-FLIPFPS_API void flipfps_config_defaults(FlipFpsConfigAbi* out);
-FLIPFPS_API int32_t flipfps_config_load(FlipFpsConfigAbi* out);
-FLIPFPS_API int32_t flipfps_config_save(const FlipFpsConfigAbi* in);
-FLIPFPS_API void flipfps_config_path(char* buffer, int32_t length);
+XRFPS_API void xrfps_config_defaults(XrFpsConfigAbi* out);
+XRFPS_API int32_t xrfps_config_load(XrFpsConfigAbi* out);
+XRFPS_API int32_t xrfps_config_save(const XrFpsConfigAbi* in);
+XRFPS_API void xrfps_config_path(char* buffer, int32_t length);
 
 // --- HUD preview (the layer's own rasterizer) ---
-FLIPFPS_API int32_t flipfps_hud_width(void);
-FLIPFPS_API int32_t flipfps_hud_height(void);
+XRFPS_API int32_t xrfps_hud_width(void);
+XRFPS_API int32_t xrfps_hud_height(void);
 // Writes width*height*4 BGRA bytes. When `use_live_metrics` is non-zero the
 // collector's latest sample fills the system rows.
-FLIPFPS_API void flipfps_hud_render(const FlipFpsConfigAbi* config, int32_t use_live_metrics,
+XRFPS_API void xrfps_hud_render(const XrFpsConfigAbi* config, int32_t use_live_metrics,
                                     float preview_target_ms, uint8_t* out_bgra);
 
 // --- install / uninstall ---
 // Returns a bitmask: 1 = registered, 2 = layer files present.
-FLIPFPS_API int32_t flipfps_status(char* manifest_path, int32_t length);
-FLIPFPS_API int32_t flipfps_install(char* error, int32_t length);
-FLIPFPS_API int32_t flipfps_uninstall(char* error, int32_t length);
+XRFPS_API int32_t xrfps_status(char* manifest_path, int32_t length);
+XRFPS_API int32_t xrfps_install(char* error, int32_t length);
+XRFPS_API int32_t xrfps_uninstall(char* error, int32_t length);
 
 // --- metrics collector ---
-FLIPFPS_API int32_t flipfps_metrics_start(void);
-FLIPFPS_API void flipfps_metrics_stop(void);
-FLIPFPS_API void flipfps_metrics_sample(void);
-FLIPFPS_API void flipfps_metrics_get(FlipFpsMetricsAbi* out);
-FLIPFPS_API void flipfps_metrics_status(char* buffer, int32_t length);
+XRFPS_API int32_t xrfps_metrics_start(void);
+XRFPS_API void xrfps_metrics_stop(void);
+XRFPS_API void xrfps_metrics_sample(void);
+XRFPS_API void xrfps_metrics_get(XrFpsMetricsAbi* out);
+XRFPS_API void xrfps_metrics_status(char* buffer, int32_t length);
 
 #ifdef __cplusplus
 }

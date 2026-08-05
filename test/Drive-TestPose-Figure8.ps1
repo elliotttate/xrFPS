@@ -1,4 +1,4 @@
-# Drives FlipFPS's test-pose shared memory through a smooth upside-down
+# Drives xrFPS's test-pose shared memory through a smooth upside-down
 # figure-8 (position and orientation), 30 Hz, for the D3D12 angle test.
 param(
     [double]$Seconds = 40
@@ -24,7 +24,7 @@ public struct QF { public double x, y, z, w;
 }
 "@ -ErrorAction SilentlyContinue
 
-$mmf = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateOrOpen('Local\FlipFPS_TestPose', 64)
+$mmf = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateOrOpen('Local\xrFPS_TestPose', 64)
 $acc = $mmf.CreateViewAccessor(0, 64)
 
 $flip = [QF]::AxisAngle(0, 0, 1, 170)

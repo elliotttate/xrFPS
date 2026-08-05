@@ -19,7 +19,7 @@
 #include "metrics.h"
 #include "stats.h"
 
-namespace flipfps {
+namespace xrfps {
 
 // Downchain OpenXR entry points the layer needs, resolved once per instance.
 struct NextFns {
@@ -110,7 +110,7 @@ struct Session {
     XrPosef anchor_pose{{0, 0, 0, 1}, {0, 0, 0}};
     bool anchor_valid{false};
 
-    // Test pose injection (FLIPFPS_TEST_POSE=1): a shared-memory grip pose
+    // Test pose injection (XRFPS_TEST_POSE=1): a shared-memory grip pose
     // replaces the left controller for automated testing on runtimes without
     // drivable tracking. Layout: float[8] = {active, px, py, pz, qx, qy, qz, qw}.
     bool test_pose_env{false};
@@ -138,4 +138,4 @@ void session_note_display_period(Session* s, XrDuration period_ns);
 // Runs stats + gesture + overlay injection, then calls the downchain xrEndFrame.
 XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info);
 
-} // namespace flipfps
+} // namespace xrfps

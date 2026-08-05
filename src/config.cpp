@@ -7,7 +7,7 @@
 #include <cstring>
 #include <string>
 
-namespace flipfps {
+namespace xrfps {
 namespace {
 
 std::string local_appdata_dir() {
@@ -15,7 +15,7 @@ std::string local_appdata_dir() {
     if (GetEnvironmentVariableA("LOCALAPPDATA", buf, sizeof(buf)) == 0) {
         return {};
     }
-    std::string dir = std::string{buf} + "\\FlipFPS";
+    std::string dir = std::string{buf} + "\\xrFPS";
     CreateDirectoryA(dir.c_str(), nullptr);
     return dir;
 }
@@ -106,7 +106,7 @@ bool Config::save(const std::string& file) const {
         return false;
     }
 
-    fprintf(f, "# FlipFPS configuration - written by the Control Center.\n");
+    fprintf(f, "# xrFPS configuration - written by the Control Center.\n");
     fprintf(f, "# Changes apply live; no need to restart the game.\n\n");
     fprintf(f, "enabled = %d\n", enabled ? 1 : 0);
     fprintf(f, "hand = %d\n", hand);
@@ -149,4 +149,4 @@ unsigned long long Config::stamp(const std::string& file) {
            data.ftLastWriteTime.dwLowDateTime;
 }
 
-} // namespace flipfps
+} // namespace xrfps

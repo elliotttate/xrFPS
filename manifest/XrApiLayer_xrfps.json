@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.0.0",
+    "api_layer": {
+        "name": "XR_APILAYER_ELLIOTTTATE_xrfps",
+        "library_path": ".\\XrApiLayer_xrfps.dll",
+        "api_version": "1.0",
+        "implementation_version": "1",
+        "description": "xrFPS: turn a controller upside down to see an FPS/frametime HUD in any OpenXR app",
+        "disable_environment": "XRFPS_DISABLE"
+    }
+}

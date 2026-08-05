@@ -4,13 +4,13 @@
 
 #include <shlobj.h>
 
-namespace flipfps {
+namespace xrfps {
 namespace installer {
 namespace {
 
 constexpr const char* kRegKey = "Software\\Khronos\\OpenXR\\1\\ApiLayers\\Implicit";
-constexpr const char* kDllName = "XrApiLayer_flipfps.dll";
-constexpr const char* kManifestName = "XrApiLayer_flipfps.json";
+constexpr const char* kDllName = "XrApiLayer_xrfps.dll";
+constexpr const char* kManifestName = "XrApiLayer_xrfps.json";
 
 std::string exe_dir() {
     char buf[MAX_PATH]{};
@@ -25,7 +25,7 @@ std::string install_dir() {
     if (GetEnvironmentVariableA("LOCALAPPDATA", buf, sizeof(buf)) == 0) {
         return {};
     }
-    return std::string{buf} + "\\FlipFPS";
+    return std::string{buf} + "\\xrFPS";
 }
 
 bool file_exists(const std::string& path) {
@@ -60,13 +60,13 @@ bool write_manifest(const std::string& path, const std::string& library_name) {
             "{\n"
             "    \"file_format_version\": \"1.0.0\",\n"
             "    \"api_layer\": {\n"
-            "        \"name\": \"XR_APILAYER_ELLIOTTTATE_flipfps\",\n"
+            "        \"name\": \"XR_APILAYER_ELLIOTTTATE_xrfps\",\n"
             "        \"library_path\": \".\\\\%s\",\n"
             "        \"api_version\": \"1.0\",\n"
             "        \"implementation_version\": \"1\",\n"
-            "        \"description\": \"FlipFPS: turn a controller upside down to see an FPS/frametime "
+            "        \"description\": \"xrFPS: turn a controller upside down to see an FPS/frametime "
             "HUD in any OpenXR app\",\n"
-            "        \"disable_environment\": \"FLIPFPS_DISABLE\"\n"
+            "        \"disable_environment\": \"XRFPS_DISABLE\"\n"
             "    }\n"
             "}\n",
             library_name.c_str());
@@ -78,7 +78,7 @@ bool write_manifest(const std::string& path, const std::string& library_name) {
 // and leave the ones still in use for the next run.
 void prune_old_layer_dlls(const std::string& dir, const std::string& keep) {
     WIN32_FIND_DATAA find{};
-    HANDLE h = FindFirstFileA((dir + "\\XrApiLayer_flipfps.*.dll").c_str(), &find);
+    HANDLE h = FindFirstFileA((dir + "\\XrApiLayer_xrfps.*.dll").c_str(), &find);
     if (h == INVALID_HANDLE_VALUE) {
         return;
     }
@@ -98,7 +98,7 @@ Status query() {
     status.manifest_path = status.install_dir + "\\" + kManifestName;
 
     WIN32_FIND_DATAA find{};
-    HANDLE h = FindFirstFileA((status.install_dir + "\\XrApiLayer_flipfps*.dll").c_str(), &find);
+    HANDLE h = FindFirstFileA((status.install_dir + "\\XrApiLayer_xrfps*.dll").c_str(), &find);
     const bool any_dll = h != INVALID_HANDLE_VALUE;
     if (any_dll) {
         FindClose(h);
@@ -150,7 +150,7 @@ bool install(std::string* error, const std::string& source_dir) {
     // over the same filename would fail. Each build is installed under a
     // content-derived name and the manifest points at that one; the running
     // game keeps its old file, and the next launch picks up the new one.
-    const std::string versioned = "XrApiLayer_flipfps." + content_tag(src_dll) + ".dll";
+    const std::string versioned = "XrApiLayer_xrfps." + content_tag(src_dll) + ".dll";
     const std::string dst_dll = dst + "\\" + versioned;
     const std::string dst_manifest = dst + "\\" + kManifestName;
 
@@ -208,4 +208,4 @@ bool uninstall(std::string* error) {
 }
 
 } // namespace installer
-} // namespace flipfps
+} // namespace xrfps

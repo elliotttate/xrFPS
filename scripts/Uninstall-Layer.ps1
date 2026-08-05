@@ -1,8 +1,8 @@
-# Removes the FlipFPS implicit layer registration and installed files.
+# Removes the xrFPS implicit layer registration and installed files.
 $ErrorActionPreference = 'Stop'
 
-$dest = Join-Path $env:LOCALAPPDATA 'FlipFPS'
-$manifestPath = Join-Path $dest 'XrApiLayer_flipfps.json'
+$dest = Join-Path $env:LOCALAPPDATA 'xrFPS'
+$manifestPath = Join-Path $dest 'XrApiLayer_xrfps.json'
 $key = 'HKCU:\Software\Khronos\OpenXR\1\ApiLayers\Implicit'
 
 if (Test-Path $key) {
@@ -11,4 +11,4 @@ if (Test-Path $key) {
 if (Test-Path $dest) {
     Remove-Item -Recurse -Force $dest
 }
-Write-Output 'FlipFPS uninstalled.'
+Write-Output 'xrFPS uninstalled.'

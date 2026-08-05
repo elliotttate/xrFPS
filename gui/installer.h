@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace flipfps {
+namespace xrfps {
 
 // Registers/unregisters the layer as a per-user implicit OpenXR API layer.
 // Everything lives under HKCU, so no elevation is ever required.
@@ -25,4 +25,4 @@ bool install(std::string* error, const std::string& source_dir = {});
 bool uninstall(std::string* error);
 
 } // namespace installer
-} // namespace flipfps
+} // namespace xrfps

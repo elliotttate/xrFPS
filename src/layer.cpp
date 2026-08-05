@@ -1,4 +1,4 @@
-// FlipFPS — implicit OpenXR API layer. Turn a controller upside down to see
+// xrFPS — implicit OpenXR API layer. Turn a controller upside down to see
 // an FPS/frametime HUD composited over any OpenXR application.
 //
 // Mechanism: the layer appends its own action set (one grip-pose action) to the
@@ -22,7 +22,7 @@ namespace {
 struct Global {
     XrInstance instance{XR_NULL_HANDLE};
     PFN_xrGetInstanceProcAddr next_gipa{};
-    flipfps::NextFns fns{};
+    xrfps::NextFns fns{};
 
     char app_name[64]{};
     XrActionSet action_set{XR_NULL_HANDLE};
@@ -31,12 +31,12 @@ struct Global {
     XrPath grip_binding[2]{XR_NULL_PATH, XR_NULL_PATH};
 
     std::mutex mtx;
-    std::unordered_map<XrSession, flipfps::Session*> sessions;
+    std::unordered_map<XrSession, xrfps::Session*> sessions;
 };
 
 Global g;
 
-flipfps::Session* find_session(XrSession session) {
+xrfps::Session* find_session(XrSession session) {
     std::lock_guard<std::mutex> lock(g.mtx);
     const auto it = g.sessions.find(session);
     return it != g.sessions.end() ? it->second : nullptr;
@@ -54,8 +54,8 @@ void create_our_actions() {
     g.fns.stringToPath(g.instance, "/user/hand/right/input/grip/pose", &g.grip_binding[1]);
 
     XrActionSetCreateInfo set_info{XR_TYPE_ACTION_SET_CREATE_INFO};
-    strcpy_s(set_info.actionSetName, "flipfps");
-    strcpy_s(set_info.localizedActionSetName, "FlipFPS");
+    strcpy_s(set_info.actionSetName, "xrfps");
+    strcpy_s(set_info.localizedActionSetName, "xrFPS");
     if (XR_FAILED(g.fns.createActionSet(g.instance, &set_info, &g.action_set))) {
         flog("xrCreateActionSet failed");
         return;
@@ -82,7 +82,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSession(XrInstance instance,
                                                     XrSession* session) {
     const XrResult r = g.fns.createSession(instance, create_info, session);
     if (XR_SUCCEEDED(r)) {
-        auto* s = flipfps::session_create(instance, *session, create_info, &g.fns, g.app_name);
+        auto* s = xrfps::session_create(instance, *session, create_info, &g.fns, g.app_name);
         std::lock_guard<std::mutex> lock(g.mtx);
         g.sessions[*session] = s;
     }
@@ -90,7 +90,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSession(XrInstance instance,
 }
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroySession(XrSession session) {
-    flipfps::Session* s = nullptr;
+    xrfps::Session* s = nullptr;
     {
         std::lock_guard<std::mutex> lock(g.mtx);
         const auto it = g.sessions.find(session);
@@ -99,7 +99,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroySession(XrSession session) {
             g.sessions.erase(it);
         }
     }
-    flipfps::session_destroy(s);
+    xrfps::session_destroy(s);
     return g.fns.destroySession(session);
 }
 
@@ -128,7 +128,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrSuggestInteractionProfileBindings(
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrAttachSessionActionSets(XrSession session,
                                                               const XrSessionActionSetsAttachInfo* info) {
-    flipfps::Session* s = find_session(session);
+    xrfps::Session* s = find_session(session);
     if (s == nullptr || g.action_set == XR_NULL_HANDLE) {
         return g.fns.attachActionSets(session, info);
     }
@@ -159,7 +159,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrAttachSessionActionSets(XrSession session,
 }
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrSyncActions(XrSession session, const XrActionsSyncInfo* info) {
-    flipfps::Session* s = find_session(session);
+    xrfps::Session* s = find_session(session);
     if (s == nullptr || !s->our_actionset_attached) {
         return g.fns.syncActions(session, info);
     }
@@ -183,16 +183,16 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrWaitFrame(XrSession session, const XrFrame
                                                 XrFrameState* frame_state) {
     const XrResult r = g.fns.waitFrame(session, wait_info, frame_state);
     if (XR_SUCCEEDED(r)) {
-        if (flipfps::Session* s = find_session(session)) {
-            flipfps::session_note_display_period(s, frame_state->predictedDisplayPeriod);
+        if (xrfps::Session* s = find_session(session)) {
+            xrfps::session_note_display_period(s, frame_state->predictedDisplayPeriod);
         }
     }
     return r;
 }
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrEndFrame(XrSession session, const XrFrameEndInfo* frame_end_info) {
-    if (flipfps::Session* s = find_session(session)) {
-        return flipfps::session_end_frame(s, frame_end_info);
+    if (xrfps::Session* s = find_session(session)) {
+        return xrfps::session_end_frame(s, frame_end_info);
     }
     return g.fns.endFrame(session, frame_end_info);
 }
@@ -201,14 +201,14 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroyInstance(XrInstance instance) {
     {
         std::lock_guard<std::mutex> lock(g.mtx);
         for (auto& [handle, s] : g.sessions) {
-            flipfps::session_destroy(s);
+            xrfps::session_destroy(s);
         }
         g.sessions.clear();
     }
     const PFN_xrDestroyInstance next_destroy = g.fns.destroyInstance;
     g.instance = XR_NULL_HANDLE;
     g.next_gipa = nullptr;
-    g.fns = flipfps::NextFns{};
+    g.fns = xrfps::NextFns{};
     g.action_set = XR_NULL_HANDLE;
     g.grip_action = XR_NULL_HANDLE;
     return next_destroy(instance);
@@ -243,7 +243,7 @@ XRAPI_ATTR XrResult XRAPI_CALL stub_xrEnumerateApiLayerProperties(uint32_t capac
     return XR_SUCCESS;
 }
 
-XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrGetInstanceProcAddr(XrInstance instance, const char* name,
+XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrGetInstanceProcAddr(XrInstance instance, const char* name,
                                                              PFN_xrVoidFunction* function) {
     static const struct {
         const char* name;
@@ -281,7 +281,7 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrGetInstanceProcAddr(XrInstance instance
     return g.next_gipa(instance, name, function);
 }
 
-XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstanceCreateInfo* create_info,
+XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCreateInfo* create_info,
                                                                 const XrApiLayerCreateInfo* layer_info,
                                                                 XrInstance* instance) {
     if (layer_info == nullptr || layer_info->nextInfo == nullptr ||
@@ -294,7 +294,7 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstance
     XrApiLayerCreateInfo chained = *layer_info;
     chained.nextInfo = next->next;
 
-    // Test aid: FLIPFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
+    // Test aid: XRFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
     // instance extensions on the app's behalf (e.g. Meta XR Operator's
     // automation extension inside an off-the-shelf game). No effect unless
     // the environment variable is set.
@@ -302,7 +302,7 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstance
     std::vector<const char*> extra_extensions;
     std::vector<std::string> extra_storage;
     char extra_env[512]{};
-    if (GetEnvironmentVariableA("FLIPFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
+    if (GetEnvironmentVariableA("XRFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
         extra_extensions.assign(create_info->enabledExtensionNames,
                                 create_info->enabledExtensionNames + create_info->enabledExtensionCount);
         char* context = nullptr;
@@ -323,7 +323,7 @@ XRAPI_ATTR XrResult XRAPI_CALL flipfps_xrCreateApiLayerInstance(const XrInstance
         return r;
     }
     if (!extra_storage.empty()) {
-        flog("enabled %u extra extension(s) via FLIPFPS_TEST_ENABLE_EXT", (unsigned)extra_storage.size());
+        flog("enabled %u extra extension(s) via XRFPS_TEST_ENABLE_EXT", (unsigned)extra_storage.size());
     }
 
     g.instance = *instance;
@@ -379,7 +379,7 @@ extern "C" __declspec(dllexport) XRAPI_ATTR XrResult XRAPI_CALL xrNegotiateLoade
 
     api_layer_request->layerInterfaceVersion = XR_CURRENT_LOADER_API_LAYER_VERSION;
     api_layer_request->layerApiVersion = XR_CURRENT_API_VERSION;
-    api_layer_request->getInstanceProcAddr = flipfps_xrGetInstanceProcAddr;
-    api_layer_request->createApiLayerInstance = flipfps_xrCreateApiLayerInstance;
+    api_layer_request->getInstanceProcAddr = xrfps_xrGetInstanceProcAddr;
+    api_layer_request->createApiLayerInstance = xrfps_xrCreateApiLayerInstance;
     return XR_SUCCESS;
 }

@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace flipfps {
+namespace xrfps {
 
 // Every user-facing setting. Shared by the layer (reads, live) and the Control
 // Center (reads/writes). Kept plain so both sides can use it without any
@@ -46,7 +46,7 @@ struct Config {
     bool show_gpu_clock{false};
     bool show_ram{false};
 
-    // Where the config lives: %LOCALAPPDATA%\FlipFPS\config.txt
+    // Where the config lives: %LOCALAPPDATA%\xrFPS\config.txt
     static std::string path();
 
     // Missing keys keep their defaults, so new options roll out cleanly.
@@ -57,4 +57,4 @@ struct Config {
     static unsigned long long stamp(const std::string& file = path());
 };
 
-} // namespace flipfps
+} // namespace xrfps

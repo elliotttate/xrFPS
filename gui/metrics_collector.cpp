@@ -4,8 +4,6 @@
 
 #include <pdh.h>
 #include <pdhmsg.h>
-#include <psapi.h>
-#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -14,7 +12,7 @@
 
 #pragma comment(lib, "pdh.lib")
 
-namespace flipfps {
+namespace xrfps {
 namespace {
 
 // NVML, resolved at runtime so the build has no NVIDIA dependency.
@@ -46,22 +44,6 @@ struct Nvml {
 };
 
 Nvml g_nvml;
-
-// Known VR runtime/game host patterns, most specific first. The collector
-// reports GPU load for the actual VR app rather than the whole desktop.
-bool looks_like_vr_app(const wchar_t* exe) {
-    static const wchar_t* kSkip[] = {L"vrserver.exe",   L"vrcompositor.exe", L"vrmonitor.exe",
-                                     L"vrdashboard.exe", L"vrwebhelper.exe",  L"steam.exe",
-                                     L"steamwebhelper.exe", L"explorer.exe", L"dwm.exe",
-                                     L"OVRServer_x64.exe", L"OVRRedir.exe", L"MetaXRSimulator.exe",
-                                     L"VirtualDesktop.Streamer.exe", L"flipfps_control.exe"};
-    for (const wchar_t* skip : kSkip) {
-        if (_wcsicmp(exe, skip) == 0) {
-            return false;
-        }
-    }
-    return true;
-}
 
 } // namespace
 
@@ -286,4 +268,4 @@ void MetricsCollector::sample() {
     *view_ = latest_;
 }
 
-} // namespace flipfps
+} // namespace xrfps

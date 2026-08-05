@@ -8,3 +8,5 @@ out/
 # .NET build output
 app/bin/
 app/obj/
+
+artifacts/

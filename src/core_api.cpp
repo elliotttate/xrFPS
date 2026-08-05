@@ -1,4 +1,4 @@
-#define FLIPFPS_CORE_EXPORTS
+#define XRFPS_CORE_EXPORTS
 #include "core_api.h"
 
 #include <cmath>
@@ -13,10 +13,10 @@
 
 namespace {
 
-flipfps::MetricsCollector g_collector;
+xrfps::MetricsCollector g_collector;
 
-flipfps::Config from_abi(const FlipFpsConfigAbi& in) {
-    flipfps::Config c{};
+xrfps::Config from_abi(const XrFpsConfigAbi& in) {
+    xrfps::Config c{};
     c.enabled = in.enabled != 0;
     c.hand = in.hand;
     c.flip_angle_deg = in.flip_angle_deg;
@@ -47,7 +47,7 @@ flipfps::Config from_abi(const FlipFpsConfigAbi& in) {
     return c;
 }
 
-void to_abi(const flipfps::Config& c, FlipFpsConfigAbi* out) {
+void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->enabled = c.enabled;
     out->hand = c.hand;
     out->flip_angle_deg = c.flip_angle_deg;
@@ -86,34 +86,34 @@ void copy_string(const std::string& value, char* buffer, int32_t length) {
 
 } // namespace
 
-void flipfps_config_defaults(FlipFpsConfigAbi* out) {
+void xrfps_config_defaults(XrFpsConfigAbi* out) {
     if (out != nullptr) {
-        to_abi(flipfps::Config{}, out);
+        to_abi(xrfps::Config{}, out);
     }
 }
 
-int32_t flipfps_config_load(FlipFpsConfigAbi* out) {
+int32_t xrfps_config_load(XrFpsConfigAbi* out) {
     if (out == nullptr) {
         return 0;
     }
-    flipfps::Config c{};
+    xrfps::Config c{};
     const bool ok = c.load();
     to_abi(c, out);
     return ok ? 1 : 0;
 }
 
-int32_t flipfps_config_save(const FlipFpsConfigAbi* in) {
+int32_t xrfps_config_save(const XrFpsConfigAbi* in) {
     return in != nullptr && from_abi(*in).save() ? 1 : 0;
 }
 
-void flipfps_config_path(char* buffer, int32_t length) {
-    copy_string(flipfps::Config::path(), buffer, length);
+void xrfps_config_path(char* buffer, int32_t length) {
+    copy_string(xrfps::Config::path(), buffer, length);
 }
 
-int32_t flipfps_hud_width(void) { return HUD_W; }
-int32_t flipfps_hud_height(void) { return HUD_H; }
+int32_t xrfps_hud_width(void) { return HUD_W; }
+int32_t xrfps_hud_height(void) { return HUD_H; }
 
-void flipfps_hud_render(const FlipFpsConfigAbi* config, int32_t use_live_metrics,
+void xrfps_hud_render(const XrFpsConfigAbi* config, int32_t use_live_metrics,
                         float preview_target_ms, uint8_t* out_bgra) {
     if (config == nullptr || out_bgra == nullptr) {
         return;
@@ -134,41 +134,41 @@ void flipfps_hud_render(const FlipFpsConfigAbi* config, int32_t use_live_metrics
         stats.push(ms);
     }
 
-    const flipfps::Config cfg = from_abi(*config);
-    const flipfps::SharedMetrics& live = g_collector.latest();
+    const xrfps::Config cfg = from_abi(*config);
+    const xrfps::SharedMetrics& live = g_collector.latest();
     hud_render(out_bgra, stats, cfg, (use_live_metrics != 0 && g_collector.running()) ? &live : nullptr,
                /*bgra=*/true);
 }
 
-int32_t flipfps_status(char* manifest_path, int32_t length) {
-    const auto s = flipfps::installer::query();
+int32_t xrfps_status(char* manifest_path, int32_t length) {
+    const auto s = xrfps::installer::query();
     copy_string(s.manifest_path, manifest_path, length);
     return (s.installed ? 1 : 0) | (s.files_present ? 2 : 0);
 }
 
-int32_t flipfps_install(char* error, int32_t length) {
+int32_t xrfps_install(char* error, int32_t length) {
     std::string message;
-    const bool ok = flipfps::installer::install(&message);
+    const bool ok = xrfps::installer::install(&message);
     copy_string(message, error, length);
     return ok ? 1 : 0;
 }
 
-int32_t flipfps_uninstall(char* error, int32_t length) {
+int32_t xrfps_uninstall(char* error, int32_t length) {
     std::string message;
-    const bool ok = flipfps::installer::uninstall(&message);
+    const bool ok = xrfps::installer::uninstall(&message);
     copy_string(message, error, length);
     return ok ? 1 : 0;
 }
 
-int32_t flipfps_metrics_start(void) { return g_collector.start() ? 1 : 0; }
-void flipfps_metrics_stop(void) { g_collector.stop(); }
-void flipfps_metrics_sample(void) { g_collector.sample(); }
+int32_t xrfps_metrics_start(void) { return g_collector.start() ? 1 : 0; }
+void xrfps_metrics_stop(void) { g_collector.stop(); }
+void xrfps_metrics_sample(void) { g_collector.sample(); }
 
-void flipfps_metrics_get(FlipFpsMetricsAbi* out) {
+void xrfps_metrics_get(XrFpsMetricsAbi* out) {
     if (out == nullptr) {
         return;
     }
-    const flipfps::SharedMetrics& m = g_collector.latest();
+    const xrfps::SharedMetrics& m = g_collector.latest();
     out->cpu_usage_pct = m.cpu_usage_pct;
     out->gpu_usage_pct = m.gpu_usage_pct;
     out->gpu_app_usage_pct = m.gpu_app_usage_pct;
@@ -184,6 +184,6 @@ void flipfps_metrics_get(FlipFpsMetricsAbi* out) {
     out->running = g_collector.running() ? 1 : 0;
 }
 
-void flipfps_metrics_status(char* buffer, int32_t length) {
+void xrfps_metrics_status(char* buffer, int32_t length) {
     copy_string(g_collector.status(), buffer, length);
 }

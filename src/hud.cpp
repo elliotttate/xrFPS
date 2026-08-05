@@ -7,8 +7,8 @@
 
 #include "font8x8_basic.h"
 
-using flipfps::Config;
-using flipfps::SharedMetrics;
+using xrfps::Config;
+using xrfps::SharedMetrics;
 
 namespace {
 
@@ -66,7 +66,7 @@ struct Canvas {
         for (; *s != 0; ++s) {
             const unsigned ch = (unsigned char)*s;
             if (ch < 128) {
-                const char* glyph = font8x8_basic[ch];
+                const unsigned char* glyph = font8x8_basic[ch];
                 for (int row = 0; row < 8; ++row) {
                     for (int col = 0; col < 8; ++col) {
                         if ((glyph[row] >> col) & 1) {
@@ -94,6 +94,11 @@ struct RowStack {
         cv.text(right_x - cv.text_w(text, scale), y, scale, text, c);
         y += line_h;
     }
+};
+
+struct PendingRow {
+    char text[32]{};
+    Color color{};
 };
 
 } // namespace
@@ -176,70 +181,85 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
         rows.add(buf, th.dim);
     }
 
-    // System metrics, when the Control Center is publishing them.
+    // System metrics, when the Control Center is publishing them. Collect
+    // them first, then render two columns beneath the headline rows. This
+    // keeps the graph readable even when every available metric is enabled.
+    PendingRow metric_rows[8]{};
+    int metric_count = 0;
+    const auto metric = [&](Color color, const char* format, auto... args) {
+        if (metric_count >= (int)(sizeof(metric_rows) / sizeof(metric_rows[0]))) {
+            return;
+        }
+        PendingRow& row = metric_rows[metric_count++];
+        snprintf(row.text, sizeof(row.text), format, args...);
+        row.color = color;
+    };
     if (metrics != nullptr) {
         if (config.show_cpu_usage && metrics->cpu_usage_pct >= 0.0f) {
-            snprintf(buf, sizeof(buf), "CPU %3.0f%%", metrics->cpu_usage_pct);
-            rows.add(buf, load_color(metrics->cpu_usage_pct));
+            metric(load_color(metrics->cpu_usage_pct), "CPU %3.0f%%", metrics->cpu_usage_pct);
         }
         if (config.show_gpu_usage && metrics->gpu_usage_pct >= 0.0f) {
-            snprintf(buf, sizeof(buf), "GPU %3.0f%%", metrics->gpu_usage_pct);
-            rows.add(buf, load_color(metrics->gpu_usage_pct));
+            metric(load_color(metrics->gpu_usage_pct), "GPU %3.0f%%", metrics->gpu_usage_pct);
         }
         if (config.show_gpu_app_usage && metrics->gpu_app_usage_pct >= 0.0f) {
-            snprintf(buf, sizeof(buf), "APP %3.0f%%", metrics->gpu_app_usage_pct);
-            rows.add(buf, load_color(metrics->gpu_app_usage_pct));
+            metric(load_color(metrics->gpu_app_usage_pct), "APP %3.0f%%", metrics->gpu_app_usage_pct);
         }
         if (config.show_vram && metrics->vram_used_mb >= 0.0f) {
-            snprintf(buf, sizeof(buf), "VRAM %.1fG", metrics->vram_used_mb / 1024.0f);
-            rows.add(buf, th.dim);
+            metric(th.dim, "VRAM %.1fG", metrics->vram_used_mb / 1024.0f);
         }
         if (config.show_gpu_clock && metrics->gpu_clock_mhz >= 0.0f) {
-            snprintf(buf, sizeof(buf), "CLK %4.0f", metrics->gpu_clock_mhz);
-            rows.add(buf, th.dim);
+            metric(th.dim, "CLK %4.0f", metrics->gpu_clock_mhz);
         }
         if (config.show_gpu_temp && metrics->gpu_temp_c >= 0.0f) {
-            snprintf(buf, sizeof(buf), "GPU %2.0fC", metrics->gpu_temp_c);
-            rows.add(buf, metrics->gpu_temp_c >= 83.0f ? th.bad
-                                                       : (metrics->gpu_temp_c >= 75.0f ? th.warn : th.dim));
+            metric(metrics->gpu_temp_c >= 83.0f ? th.bad
+                                                : (metrics->gpu_temp_c >= 75.0f ? th.warn : th.dim),
+                   "GPU %2.0fC", metrics->gpu_temp_c);
         }
         if (config.show_cpu_temp && metrics->cpu_temp_c >= 0.0f) {
-            snprintf(buf, sizeof(buf), "CPU %2.0fC", metrics->cpu_temp_c);
-            rows.add(buf, metrics->cpu_temp_c >= 90.0f ? th.bad
-                                                       : (metrics->cpu_temp_c >= 80.0f ? th.warn : th.dim));
+            metric(metrics->cpu_temp_c >= 90.0f ? th.bad
+                                                : (metrics->cpu_temp_c >= 80.0f ? th.warn : th.dim),
+                   "CPU %2.0fC", metrics->cpu_temp_c);
         }
         if (config.show_ram && metrics->ram_used_gb >= 0.0f) {
-            snprintf(buf, sizeof(buf), "RAM %.1fG", metrics->ram_used_gb);
-            rows.add(buf, th.dim);
+            metric(th.dim, "RAM %.1fG", metrics->ram_used_gb);
         }
     }
+
+    const int metrics_y = std::max(header_bottom + 8, rows.y + 4);
+    const int metrics_per_column = (metric_count + 1) / 2;
+    RowStack metric_left{cv, HUD_W / 2 - 8, metrics_y, 2, 20};
+    RowStack metric_right{cv, HUD_W - 18, metrics_y, 2, 20};
+    for (int i = 0; i < metric_count; ++i) {
+        RowStack& column = i < metrics_per_column ? metric_left : metric_right;
+        column.add(metric_rows[i].text, metric_rows[i].color);
+    }
+    const int metrics_bottom = metrics_y + metrics_per_column * 20;
 
     if (!config.show_graph) {
         return;
     }
 
     // Frametime graph: one 2px bar per sample, newest at the right edge.
-    const int gy = std::max(header_bottom + 8, rows.y + 4);
-    const int gh = std::clamp(config.graph_height, 40, HUD_H - gy - 12);
+    const int gy = std::max({header_bottom + 8, rows.y + 4, metrics_bottom + 4});
+    const int max_graph_h = HUD_H - gy - 12;
+    if (max_graph_h < 24) {
+        return;
+    }
+    const int gh = std::clamp(config.graph_height, 24, max_graph_h);
     constexpr int kGx = 16;
     constexpr int kGw = HUD_W - 32;
     constexpr int kBarW = 2;
     constexpr int kBars = kGw / kBarW;
-    if (gh < 24) {
-        return;
-    }
-
     cv.fill(kGx - 1, gy - 1, kGw + 2, 1, th.border);
     cv.fill(kGx - 1, gy + gh, kGw + 2, 1, th.border);
     cv.fill(kGx - 1, gy, 1, gh, th.border);
     cv.fill(kGx + kGw, gy, 1, gh, th.border);
     cv.fill(kGx, gy, kGw, gh, th.graph_bg);
 
-    float peak = target * 2.2f;
+    // A stable target-relative scale makes consecutive frames comparable.
+    // Very large spikes clip at the top rather than moving the target line.
+    const float peak = target * 2.5f;
     const int avail = std::min(stats.count, kBars);
-    for (int i = 0; i < avail; ++i) {
-        peak = std::max(peak, stats.sample(stats.count - avail + i) * 1.1f);
-    }
 
     const auto ms_to_y = [&](float m) {
         const float t = std::clamp(m / peak, 0.0f, 1.0f);
@@ -258,6 +278,6 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
         cv.fill(x, y, kBarW, gy + gh - y, severity(m));
     }
 
-    snprintf(buf, sizeof(buf), "%4.1f", target);
+    snprintf(buf, sizeof(buf), "TGT %.1fMS", target);
     cv.text(kGx + kGw - cv.text_w(buf, 1) - 4, ty - 11, 1, buf, th.target);
 }

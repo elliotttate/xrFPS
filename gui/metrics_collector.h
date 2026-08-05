@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace flipfps {
+namespace xrfps {
 
 // Samples system performance counters and publishes them for the layer.
 // PDH supplies vendor-neutral CPU and per-process GPU utilization; NVML, when
@@ -48,4 +48,4 @@ private:
     const SharedSession* session_view_{};
 };
 
-} // namespace flipfps
+} // namespace xrfps

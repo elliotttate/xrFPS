@@ -1,4 +1,4 @@
-// FlipFPS Control Center — install/enable the layer, tune every option, pick
+// xrFPS Control Center — install/enable the layer, tune every option, pick
 // which readouts appear, and preview the result. Settings apply live: the
 // layer re-reads the config file about once a second, so a game already
 // running picks up changes without restarting.
@@ -25,8 +25,8 @@
 #include "metrics_collector.h"
 
 using Microsoft::WRL::ComPtr;
-using flipfps::Config;
-using flipfps::MetricsCollector;
+using xrfps::Config;
+using xrfps::MetricsCollector;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -129,15 +129,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         std::string message;
         bool ok = true;
         if (args.find(L"--install") != std::wstring::npos) {
-            ok = flipfps::installer::install(&message);
-            printf(ok ? "FlipFPS: layer installed\n" : "FlipFPS: install failed - %s\n", message.c_str());
+            ok = xrfps::installer::install(&message);
+            printf(ok ? "xrFPS: layer installed\n" : "xrFPS: install failed - %s\n", message.c_str());
         } else if (args.find(L"--uninstall") != std::wstring::npos) {
-            ok = flipfps::installer::uninstall(&message);
-            printf(ok ? "FlipFPS: layer uninstalled\n" : "FlipFPS: uninstall failed - %s\n",
+            ok = xrfps::installer::uninstall(&message);
+            printf(ok ? "xrFPS: layer uninstalled\n" : "xrFPS: uninstall failed - %s\n",
                    message.c_str());
         } else {
-            const auto s = flipfps::installer::query();
-            printf("FlipFPS: %s%s\n  manifest: %s\n",
+            const auto s = xrfps::installer::query();
+            printf("xrFPS: %s%s\n  manifest: %s\n",
                    s.installed ? "installed" : "not installed",
                    s.files_present ? "" : " (layer files missing)", s.manifest_path.c_str());
         }
@@ -156,15 +156,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     }
 
     WNDCLASSEXW wc{sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, nullptr, nullptr, nullptr,
-                   L"FlipFPSControlCenter", nullptr};
+                   L"xrFPSControlCenter", nullptr};
     RegisterClassExW(&wc);
 
     const UINT dpi = GetDpiForSystem();
     const float scale = std::max(1.0f, (float)dpi / 96.0f);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"FlipFPS Control Center", WS_OVERLAPPEDWINDOW, 100, 100,
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"xrFPS Control Center", WS_OVERLAPPEDWINDOW, 100, 100,
                               (int)(1180 * scale), (int)(820 * scale), nullptr, nullptr, inst, nullptr);
     if (!create_device(hwnd)) {
-        MessageBoxW(nullptr, L"Could not create a Direct3D 11 device.", L"FlipFPS", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Could not create a Direct3D 11 device.", L"xrFPS", MB_ICONERROR);
         return 1;
     }
     ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -194,7 +194,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     collector.start();
     ULONGLONG last_sample = 0;
 
-    auto status = flipfps::installer::query();
+    auto status = xrfps::installer::query();
     std::string action_message;
 
     // Preview texture: the HUD is rasterized by the very same code the layer
@@ -245,13 +245,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
         ImGui::SetNextWindowSize(vp->WorkSize);
-        ImGui::Begin("FlipFPS", nullptr,
+        ImGui::Begin("xrFPS", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         // ---- header: install state -------------------------------------
         ImGui::PushFont(nullptr);
-        ImGui::TextUnformatted("FlipFPS Control Center");
+        ImGui::TextUnformatted("xrFPS Control Center");
         ImGui::PopFont();
         ImGui::SameLine(0, 20);
         if (status.installed && status.files_present) {
@@ -266,24 +266,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         if (!status.installed) {
             if (ImGui::Button("Install layer", ImVec2(140 * scale, 0))) {
                 std::string err;
-                action_message = flipfps::installer::install(&err)
+                action_message = xrfps::installer::install(&err)
                                      ? "Installed. Launch (or relaunch) an OpenXR game to load it."
                                      : "Install failed: " + err;
-                status = flipfps::installer::query();
+                status = xrfps::installer::query();
             }
         } else {
             if (ImGui::Button("Uninstall layer", ImVec2(150 * scale, 0))) {
                 std::string err;
-                action_message = flipfps::installer::uninstall(&err) ? "Uninstalled."
+                action_message = xrfps::installer::uninstall(&err) ? "Uninstalled."
                                                                      : "Uninstall failed: " + err;
-                status = flipfps::installer::query();
+                status = xrfps::installer::query();
             }
             ImGui::SameLine();
             if (ImGui::Button("Reinstall / update", ImVec2(180 * scale, 0))) {
                 std::string err;
-                action_message = flipfps::installer::install(&err) ? "Layer files updated."
+                action_message = xrfps::installer::install(&err) ? "Layer files updated."
                                                                    : "Update failed: " + err;
-                status = flipfps::installer::query();
+                status = xrfps::installer::query();
             }
         }
         if (!action_message.empty()) {
@@ -423,7 +423,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
 
         {
             const FrameStats preview_stats = make_preview_stats(preview_target);
-            const flipfps::SharedMetrics& live = collector.latest();
+            const xrfps::SharedMetrics& live = collector.latest();
             hud_render(preview_pixels.data(), preview_stats, config,
                        collector.running() ? &live : nullptr, /*bgra=*/false);
 
@@ -463,7 +463,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Open log")) {
-            const std::string log = status.install_dir + "\\flipfps.log";
+            const std::string log = status.install_dir + "\\xrfps.log";
             ShellExecuteA(nullptr, "open", log.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
 
