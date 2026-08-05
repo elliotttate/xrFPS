@@ -240,7 +240,7 @@ public sealed partial class MainWindow : Window
         PanelOffsetSlider.Value = _config.PanelOffsetM * 100.0;
         PanelRollSlider.Value = _config.PanelRollDeg;
         OpacitySlider.Value = _config.Opacity * 100.0;
-        ThemeCombo.SelectedIndex = Math.Clamp(_config.Theme, 0, 2);
+        ThemeCombo.SelectedIndex = Math.Clamp(_config.Theme, 0, 5);
         RefreshSlider.Value = _config.HudRefreshHz * 10.0;
 
         ShowFps.IsChecked = _config.ShowFps != 0;
@@ -395,39 +395,31 @@ public sealed partial class MainWindow : Window
         Brush stateBrush;
         string headline;
         string detail;
-        string sidebarHint;
         if (registered && filesPresent)
         {
             stateBrush = good;
             headline = "Layer installed";
             detail = "Every OpenXR app started from now on loads xrFPS automatically.";
-            sidebarHint = "Active for this user";
         }
         else if (registered)
         {
             stateBrush = warn;
             headline = "Registered, files missing";
             detail = "The registry points to files that are no longer on disk. Use Update files to repair the installation.";
-            sidebarHint = "Repair required";
         }
         else
         {
             stateBrush = bad;
             headline = "Not installed";
             detail = "Install the layer to make it available to OpenXR apps. Administrator rights are not required.";
-            sidebarHint = "Installation required";
         }
 
         StatusDot.Fill = stateBrush;
-        SidebarStatusDot.Fill = stateBrush;
         InstallPageStatusDot.Fill = stateBrush;
         StatusHeadline.Text = headline;
         InstallPageStatusHeadline.Text = headline;
         StatusDetail.Text = detail;
         InstallPageStatusDetail.Text = detail;
-        SidebarStatusText.Text = registered && filesPresent ? "Installed" : registered ? "Needs repair" : "Not installed";
-        SidebarStatusText.Foreground = stateBrush;
-        SidebarHintText.Text = sidebarHint;
 
         SetInstallButtonVisibility(registered);
         ManifestPathText.Text = manifest.ToString();

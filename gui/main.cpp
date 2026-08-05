@@ -334,8 +334,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (ImGui::SliderFloat("Opacity", &config.opacity, 0.15f, 1.0f, "%.2f")) {
                 dirty = true;
             }
-            const char* themes[] = {"Dark", "Light", "High contrast"};
-            if (ImGui::Combo("Theme", &config.theme, themes, 3)) {
+            const char* themes[] = {"Midnight", "Porcelain", "High contrast",
+                                    "Aurora", "Ember", "Glacier"};
+            if (ImGui::Combo("Theme", &config.theme, themes, 6)) {
                 dirty = true;
             }
             if (ImGui::SliderFloat("HUD refresh", &config.hud_refresh_hz, 1.0f, 20.0f, "%.1f Hz")) {

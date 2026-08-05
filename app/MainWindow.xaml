@@ -88,31 +88,6 @@
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
-            <NavigationView.PaneFooter>
-                <Border Style="{StaticResource CardStyle}" Padding="12" Margin="4,8">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <Ellipse
-                            x:Name="SidebarStatusDot"
-                            Width="9"
-                            Height="9"
-                            Fill="{ThemeResource MutedTextBrush}"
-                            VerticalAlignment="Center" />
-                        <StackPanel>
-                            <TextBlock Text="LAYER" Style="{StaticResource EyebrowStyle}" />
-                            <TextBlock
-                                x:Name="SidebarStatusText"
-                                Text="Checking…"
-                                FontSize="13"
-                                FontWeight="SemiBold" />
-                            <TextBlock
-                                x:Name="SidebarHintText"
-                                Style="{StaticResource MutedTextStyle}"
-                                FontSize="11" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </NavigationView.PaneFooter>
-
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -442,9 +417,12 @@
                                             MaxWidth="360"
                                             HorizontalAlignment="Stretch"
                                             SelectionChanged="Setting_Changed">
-                                            <ComboBoxItem Content="Dark" />
-                                            <ComboBoxItem Content="Light" />
+                                            <ComboBoxItem Content="Midnight" />
+                                            <ComboBoxItem Content="Porcelain" />
                                             <ComboBoxItem Content="High contrast" />
+                                            <ComboBoxItem Content="Aurora" />
+                                            <ComboBoxItem Content="Ember" />
+                                            <ComboBoxItem Content="Glacier" />
                                         </ComboBox>
                                         <StackPanel Spacing="4">
                                             <TextBlock x:Name="RefreshLabel" Text="HUD refresh" Style="{StaticResource SettingLabelStyle}" />

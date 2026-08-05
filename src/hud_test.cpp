@@ -1,7 +1,9 @@
 // Offline HUD render check: fills the stats ring with a synthetic frametime
 // pattern and writes the rasterized HUD as a 32-bit BMP for visual inspection.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -29,7 +31,18 @@ struct BmpHeader {
 #pragma pack(pop)
 
 int main(int argc, char** argv) {
-    const bool dense = argc > 1 && std::strcmp(argv[1], "--dense") == 0;
+    bool dense = false;
+    int theme = 0;
+    const char* path = "hudtest.bmp";
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--dense") == 0) {
+            dense = true;
+        } else if (std::strcmp(argv[i], "--theme") == 0 && i + 1 < argc) {
+            theme = std::clamp(std::atoi(argv[++i]), 0, 5);
+        } else {
+            path = argv[i];
+        }
+    }
     FrameStats stats{};
     stats.target_ms = 11.111f;
 
@@ -46,6 +59,7 @@ int main(int argc, char** argv) {
     }
 
     xrfps::Config config{};
+    config.theme = theme;
     config.show_percentiles = true;
     xrfps::SharedMetrics metrics{};
     const xrfps::SharedMetrics* metric_source = nullptr;
@@ -74,22 +88,26 @@ int main(int argc, char** argv) {
 
     // Both horizontal graph borders should survive even in the dense mode.
     // This catches regressions where readout rows consume the graph entirely.
-    int graph_border_rows = 0;
-    for (int y = 0; y < HUD_H; ++y) {
-        int border_pixels = 0;
-        for (int x = 0; x < HUD_W; ++x) {
-            const uint8_t* p = &px[(y * HUD_W + x) * 4];
-            if (p[0] == 78 && p[1] == 65 && p[2] == 60) {
-                ++border_pixels;
+    if (theme == 0) {
+        int graph_border_rows = 0;
+        // Ignore the panel's own top/bottom outline; only the graph lives in
+        // this interior vertical range and contributes two long border rows.
+        for (int y = HUD_H / 4; y < HUD_H - 1; ++y) {
+            int border_pixels = 0;
+            for (int x = 0; x < HUD_W; ++x) {
+                const uint8_t* p = &px[(y * HUD_W + x) * 4];
+                if (p[0] == 78 && p[1] == 65 && p[2] == 60) {
+                    ++border_pixels;
+                }
+            }
+            if (border_pixels > HUD_W - 64) {
+                ++graph_border_rows;
             }
         }
-        if (border_pixels > HUD_W - 64) {
-            ++graph_border_rows;
+        if (graph_border_rows < 2) {
+            std::fprintf(stderr, "frametime graph lost its minimum layout height\n");
+            return 2;
         }
-    }
-    if (graph_border_rows < 2) {
-        std::fprintf(stderr, "frametime graph lost its minimum layout height\n");
-        return 2;
     }
 
     // Composite onto a checkerboard so alpha is visible.
@@ -107,8 +125,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    const char* path = dense ? (argc > 2 ? argv[2] : "hudtest-dense.bmp")
-                             : (argc > 1 ? argv[1] : "hudtest.bmp");
     BmpHeader hdr{};
     hdr.width = HUD_W;
     hdr.height = -HUD_H; // top-down

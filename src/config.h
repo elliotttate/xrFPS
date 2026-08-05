@@ -27,7 +27,9 @@ struct Config {
     // --- appearance ---
     float opacity{0.9f};
     float hud_refresh_hz{6.7f};
-    int theme{0}; // 0 = dark, 1 = light, 2 = high contrast
+    // 0 = Midnight, 1 = Porcelain, 2 = high contrast,
+    // 3 = Aurora, 4 = Ember, 5 = Glacier.
+    int theme{0};
     bool show_graph{true};
     int graph_height{168};
 

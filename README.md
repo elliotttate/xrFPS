@@ -29,6 +29,14 @@ average frametime in milliseconds, the target frametime, and a scrolling
 per-frame graph with the target as a dashed line — green at target, amber for
 minor misses, red for spikes.
 
+Its proportional, anti-aliased typography uses the Windows Segoe UI family
+with a built-in proportional bitmap fallback. Six headset-tuned themes cover
+dark, light, accessibility, cool, warm, and glassy visual styles:
+**Midnight**, **Porcelain**, **High contrast**, **Aurora**, **Ember**, and
+**Glacier**.
+
+![VR HUD themes](docs/hud-themes.png)
+
 ## Install
 
 Run the **xrFPS Control Center** and press **Install layer**. That copies the
@@ -43,7 +51,7 @@ up changes without restarting:
 
 - **Gesture** — which controller, how far it must rotate, show/hide delays.
 - **Placement & look** — panel size, distance off the controller, roll,
-  opacity, theme, and how often the HUD repaints.
+  opacity, one of six HUD themes, and how often the HUD repaints.
 - **Readouts** — choose the HUD rows: FPS, frametime, target, on-target %,
   1% low, and the frametime graph, plus system metrics (CPU and GPU usage,
   this app's own GPU share, VRAM, GPU clock/temperature, RAM). The app marks

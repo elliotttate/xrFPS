@@ -37,7 +37,7 @@ add_library(XrApiLayer_xrfps SHARED
     src/config.cpp
 )
 target_include_directories(XrApiLayer_xrfps PRIVATE "${XRFPS_OPENXR_INCLUDE}")
-target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi)
+target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi gdiplus)
 target_compile_definitions(XrApiLayer_xrfps PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 # The manifest travels next to the DLL; library_path is relative.
@@ -51,6 +51,7 @@ add_custom_command(TARGET XrApiLayer_xrfps POST_BUILD
 # inspected without a headset.
 add_executable(xrfps_hudtest src/hud_test.cpp src/hud.cpp src/config.cpp)
 target_include_directories(xrfps_hudtest PRIVATE "${XRFPS_OPENXR_INCLUDE}")
+target_link_libraries(xrfps_hudtest PRIVATE gdiplus)
 target_compile_definitions(xrfps_hudtest PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 include(CTest)
@@ -59,6 +60,11 @@ if(BUILD_TESTING)
         COMMAND xrfps_hudtest "${CMAKE_CURRENT_BINARY_DIR}/hudtest-default.bmp")
     add_test(NAME xrfps_hud_dense
         COMMAND xrfps_hudtest --dense "${CMAKE_CURRENT_BINARY_DIR}/hudtest-dense.bmp")
+    foreach(XRFPS_THEME RANGE 1 5)
+        add_test(NAME xrfps_hud_theme_${XRFPS_THEME}
+            COMMAND xrfps_hudtest --theme ${XRFPS_THEME}
+                    "${CMAKE_CURRENT_BINARY_DIR}/hudtest-theme-${XRFPS_THEME}.bmp")
+    endforeach()
 endif()
 
 # Native core shared by the Control Center: the real config, HUD renderer,
@@ -71,6 +77,7 @@ add_library(xrfps_core SHARED
     gui/metrics_collector.cpp
 )
 target_include_directories(xrfps_core PRIVATE "${XRFPS_OPENXR_INCLUDE}")
+target_link_libraries(xrfps_core PRIVATE gdiplus)
 target_compile_definitions(xrfps_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 # The app is .NET, which always uses the dynamic CRT.
 set_property(TARGET xrfps_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
@@ -102,7 +109,7 @@ if(XRFPS_BUILD_GUI)
     )
     target_include_directories(xrfps_control PRIVATE
         "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends" "${XRFPS_OPENXR_INCLUDE}")
-    target_link_libraries(xrfps_control PRIVATE d3d11 dxgi dwmapi shell32)
+    target_link_libraries(xrfps_control PRIVATE d3d11 dxgi dwmapi shell32 gdiplus)
     target_compile_definitions(xrfps_control PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
     # The Control Center installs the layer from its own directory.
