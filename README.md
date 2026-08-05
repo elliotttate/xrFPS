@@ -88,9 +88,17 @@ implements core OpenXR quad layers works.
 
 Notes and limits:
 
-- Frame stats measure the app's `xrEndFrame` cadence — the honest "how fast is
-  this app actually submitting" number, which is what reprojection feeds on.
-  GPU render time is not measured separately.
+- FlipFPS measures the **frame interval** — the wall-clock cadence of the
+  app's `xrEndFrame` submissions. That's delivered smoothness: at a locked
+  90 fps it reads ~11.1 ms even if the GPU only needed 6, because vsync
+  pacing quantizes delivery. Tools like fpsVR report CPU/GPU **workload
+  times** instead; the numbers only coincide when the GPU is saturated.
+  A layer cannot measure the app's GPU workload (it doesn't own the app's
+  command queues), so that split is out of scope by design. The interval a
+  frame after each HUD refresh is excluded from the stats so the overlay's
+  own compositor cost never pollutes the graph.
+- ON TGT shows what fraction of recent frames hit the target period —
+  the fastest way to see "peak rate" vs "actually delivered rate" apart.
 - Apps that never attach action sets get no flip gesture (nothing to bind
   against); use `F10` there.
 - One quad is appended only when the app is under the runtime's
