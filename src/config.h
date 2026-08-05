@@ -17,6 +17,9 @@ struct Config {
     float show_delay_sec{0.25f};
     float hide_delay_sec{0.5f};
     bool f10_toggle{true};
+    // 0 = Auto, 1 = SteamVR compositor, 2 = Meta performance metrics,
+    // 3 = portable OpenXR submission timing.
+    int timing_source{0};
 
     // --- placement ---
     float panel_width_m{0.32f};
@@ -31,11 +34,16 @@ struct Config {
     // 3 = Aurora, 4 = Ember, 5 = Glacier.
     int theme{0};
     bool show_graph{true};
+    // 0 = Auto (combined CPU/GPU when both exist), 1 = application frametime,
+    // 2 = combined CPU/GPU traces, 3 = separate side-by-side CPU and GPU graphs.
+    int graph_mode{0};
     int graph_height{168};
 
     // --- rows ---
     bool show_fps{true};
     bool show_frametime{true};
+    bool show_cpu_frametime{false};
+    bool show_gpu_frametime{false};
     bool show_target{true};
     bool show_on_target{true};
     bool show_percentiles{false}; // 1% low / 0.1% low

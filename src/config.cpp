@@ -71,6 +71,7 @@ bool Config::load(const std::string& file) {
         else if (key == "show_delay_sec") { show_delay_sec = as_float(); }
         else if (key == "hide_delay_sec") { hide_delay_sec = as_float(); }
         else if (key == "f10_toggle") { f10_toggle = as_bool(); }
+        else if (key == "timing_source") { timing_source = as_int(); }
         else if (key == "panel_width_m") { panel_width_m = as_float(); }
         else if (key == "panel_offset_m") { panel_offset_m = as_float(); }
         else if (key == "panel_roll_deg") { panel_roll_deg = as_float(); }
@@ -78,9 +79,12 @@ bool Config::load(const std::string& file) {
         else if (key == "hud_refresh_hz") { hud_refresh_hz = as_float(); }
         else if (key == "theme") { theme = as_int(); }
         else if (key == "show_graph") { show_graph = as_bool(); }
+        else if (key == "graph_mode") { graph_mode = as_int(); }
         else if (key == "graph_height") { graph_height = as_int(); }
         else if (key == "show_fps") { show_fps = as_bool(); }
         else if (key == "show_frametime") { show_frametime = as_bool(); }
+        else if (key == "show_cpu_frametime") { show_cpu_frametime = as_bool(); }
+        else if (key == "show_gpu_frametime") { show_gpu_frametime = as_bool(); }
         else if (key == "show_target") { show_target = as_bool(); }
         else if (key == "show_on_target") { show_on_target = as_bool(); }
         else if (key == "show_percentiles") { show_percentiles = as_bool(); }
@@ -114,6 +118,7 @@ bool Config::save(const std::string& file) const {
     fprintf(f, "show_delay_sec = %.2f\n", show_delay_sec);
     fprintf(f, "hide_delay_sec = %.2f\n", hide_delay_sec);
     fprintf(f, "f10_toggle = %d\n", f10_toggle ? 1 : 0);
+    fprintf(f, "timing_source = %d\n", timing_source);
     fprintf(f, "\npanel_width_m = %.3f\n", panel_width_m);
     fprintf(f, "panel_offset_m = %.3f\n", panel_offset_m);
     fprintf(f, "panel_roll_deg = %.1f\n", panel_roll_deg);
@@ -121,9 +126,12 @@ bool Config::save(const std::string& file) const {
     fprintf(f, "hud_refresh_hz = %.1f\n", hud_refresh_hz);
     fprintf(f, "theme = %d\n", theme);
     fprintf(f, "show_graph = %d\n", show_graph ? 1 : 0);
+    fprintf(f, "graph_mode = %d\n", graph_mode);
     fprintf(f, "graph_height = %d\n", graph_height);
     fprintf(f, "\nshow_fps = %d\n", show_fps ? 1 : 0);
     fprintf(f, "show_frametime = %d\n", show_frametime ? 1 : 0);
+    fprintf(f, "show_cpu_frametime = %d\n", show_cpu_frametime ? 1 : 0);
+    fprintf(f, "show_gpu_frametime = %d\n", show_gpu_frametime ? 1 : 0);
     fprintf(f, "show_target = %d\n", show_target ? 1 : 0);
     fprintf(f, "show_on_target = %d\n", show_on_target ? 1 : 0);
     fprintf(f, "show_percentiles = %d\n", show_percentiles ? 1 : 0);

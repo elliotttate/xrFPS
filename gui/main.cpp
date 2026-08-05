@@ -97,7 +97,8 @@ FrameStats make_preview_stats(float target_ms) {
         if (i > 210 && i < 240) {
             ms += target_ms * 0.45f;
         }
-        stats.push(ms);
+        stats.push(ms, target_ms * (0.42f + 0.06f * std::sin((float)i * 0.07f)),
+                   target_ms * (0.72f + 0.08f * std::sin((float)i * 0.13f)));
     }
     return stats;
 }
@@ -347,6 +348,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         }
 
         if (ImGui::CollapsingHeader("Readouts", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* timing_sources[] = {"Auto - best available", "SteamVR compositor",
+                                            "Meta performance metrics", "OpenXR submissions"};
+            if (ImGui::Combo("Timing source", &config.timing_source, timing_sources, 4)) {
+                dirty = true;
+            }
+            const char* graph_modes[] = {"Auto - best available", "Application frametime",
+                                         "CPU + GPU - combined",
+                                         "CPU and GPU - separate graphs"};
+            if (ImGui::Combo("Graph", &config.graph_mode, graph_modes, 4)) {
+                dirty = true;
+            }
             ImGui::Columns(2, nullptr, false);
             const auto row = [&](const char* label, bool* value, const char* tip = nullptr) {
                 if (ImGui::Checkbox(label, value)) {
@@ -359,6 +371,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             };
             row("FPS", &config.show_fps);
             row("Frametime", &config.show_frametime);
+            row("CPU frametime", &config.show_cpu_frametime);
+            row("GPU frametime", &config.show_gpu_frametime);
             row("Target", &config.show_target);
             row("On-target %", &config.show_on_target,
                 "Share of recent frames that hit the display's period — the honest 'is it actually "
@@ -423,7 +437,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         help("Pretend display period, so the preview colors match what your headset will show.");
 
         {
-            const FrameStats preview_stats = make_preview_stats(preview_target);
+            FrameStats preview_stats = make_preview_stats(preview_target);
+            preview_stats.source = config.timing_source == 1
+                                       ? TimingBackend::SteamVR
+                                       : (config.timing_source == 2 ? TimingBackend::Meta
+                                                                    : TimingBackend::OpenXR);
             const xrfps::SharedMetrics& live = collector.latest();
             hud_render(preview_pixels.data(), preview_stats, config,
                        collector.running() ? &live : nullptr, /*bgra=*/false);

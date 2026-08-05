@@ -502,6 +502,40 @@
                                     <Border Style="{StaticResource CardStyle}">
                                         <StackPanel Spacing="12">
                                             <TextBlock Text="Frame statistics" Style="{StaticResource CardTitleStyle}" />
+                                            <Grid ColumnSpacing="16">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox
+                                                    x:Name="TimingSourceCombo"
+                                                    Grid.Column="0"
+                                                    Header="Timing source"
+                                                    AutomationProperties.Name="Frame timing source"
+                                                    SelectionChanged="Setting_Changed">
+                                                    <ComboBoxItem Content="Auto — best available" />
+                                                    <ComboBoxItem Content="SteamVR compositor" />
+                                                    <ComboBoxItem Content="Meta performance metrics" />
+                                                    <ComboBoxItem Content="OpenXR submissions" />
+                                                </ComboBox>
+                                                <ComboBox
+                                                    x:Name="GraphModeCombo"
+                                                    Grid.Column="1"
+                                                    Header="Graph"
+                                                    AutomationProperties.Name="Frametime graph mode"
+                                                    SelectionChanged="Setting_Changed">
+                                                    <ComboBoxItem Content="Auto — best available" />
+                                                    <ComboBoxItem Content="Application frametime" />
+                                                    <ComboBoxItem Content="CPU + GPU — combined" />
+                                                    <ComboBoxItem Content="CPU and GPU — separate graphs" />
+                                                </ComboBox>
+                                            </Grid>
+                                            <TextBlock
+                                                x:Name="TimingSourceStatus"
+                                                Text="Auto will choose the best timing source exposed by the active runtime."
+                                                Style="{StaticResource MutedTextStyle}"
+                                                FontSize="12"
+                                                TextWrapping="Wrap" />
                                             <Grid ColumnSpacing="24">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -511,9 +545,11 @@
                                                     <CheckBox x:Name="ShowFps" Content="FPS" Click="Setting_Changed" />
                                                     <CheckBox x:Name="ShowTarget" Content="Target frametime" Click="Setting_Changed" />
                                                     <CheckBox x:Name="ShowPercentiles" Content="1% low" Click="Setting_Changed" />
+                                                    <CheckBox x:Name="ShowCpuFrametime" Content="CPU frametime" Click="Setting_Changed" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Spacing="10">
                                                     <CheckBox x:Name="ShowFrametime" Content="Frametime" Click="Setting_Changed" />
+                                                    <CheckBox x:Name="ShowGpuFrametime" Content="GPU frametime" Click="Setting_Changed" />
                                                     <CheckBox
                                                         x:Name="ShowOnTarget"
                                                         Content="On-target %"

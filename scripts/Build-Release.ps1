@@ -3,8 +3,8 @@
 # in-app updater parses.
 [CmdletBinding()]
 param(
-    [string]$Version = '0.3.0',
-    [string]$FileVersion = '0.3.0.0',
+    [string]$Version = '0.4.0',
+    [string]$FileVersion = '0.4.0.0',
     [string]$OpenXrSdkPath = 'C:\Users\ellio\OneDrive\Documents\GitHub\OpenXR-SDK'
 )
 

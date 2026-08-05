@@ -23,6 +23,7 @@ typedef struct XrFpsConfigAbi {
     float show_delay_sec;
     float hide_delay_sec;
     int32_t f10_toggle;
+    int32_t timing_source;
 
     float panel_width_m;
     float panel_offset_m;
@@ -32,10 +33,13 @@ typedef struct XrFpsConfigAbi {
     float hud_refresh_hz;
     int32_t theme;
     int32_t show_graph;
+    int32_t graph_mode;
     int32_t graph_height;
 
     int32_t show_fps;
     int32_t show_frametime;
+    int32_t show_cpu_frametime;
+    int32_t show_gpu_frametime;
     int32_t show_target;
     int32_t show_on_target;
     int32_t show_percentiles;
@@ -62,6 +66,13 @@ typedef struct XrFpsMetricsAbi {
     float ram_total_gb;
     uint32_t app_pid;
     char app_name[64];
+    float app_fps;
+    float app_frame_ms;
+    float app_cpu_frame_ms;
+    float app_gpu_frame_ms;
+    int32_t timing_source;
+    int32_t requested_timing_source;
+    char timing_source_name[32];
     int32_t running;
 } XrFpsMetricsAbi;
 

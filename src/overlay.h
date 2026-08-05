@@ -18,12 +18,14 @@
 #include "config.h"
 #include "metrics.h"
 #include "stats.h"
+#include "timing.h"
 
 namespace xrfps {
 
 // Downchain OpenXR entry points the layer needs, resolved once per instance.
 struct NextFns {
     PFN_xrGetInstanceProcAddr getInstanceProcAddr{};
+    PFN_xrGetInstanceProperties getInstanceProperties{};
     PFN_xrDestroyInstance destroyInstance{};
     PFN_xrCreateSession createSession{};
     PFN_xrDestroySession destroySession{};
@@ -31,6 +33,7 @@ struct NextFns {
     PFN_xrAttachSessionActionSets attachActionSets{};
     PFN_xrSyncActions syncActions{};
     PFN_xrWaitFrame waitFrame{};
+    PFN_xrBeginFrame beginFrame{};
     PFN_xrEndFrame endFrame{};
     PFN_xrStringToPath stringToPath{};
     PFN_xrCreateActionSet createActionSet{};
@@ -48,6 +51,9 @@ struct NextFns {
     PFN_xrAcquireSwapchainImage acquireSwapchainImage{};
     PFN_xrWaitSwapchainImage waitSwapchainImage{};
     PFN_xrReleaseSwapchainImage releaseSwapchainImage{};
+    PFN_xrEnumeratePerformanceMetricsCounterPathsMETA enumeratePerformanceMetricsCounterPathsMETA{};
+    PFN_xrSetPerformanceMetricsStateMETA setPerformanceMetricsStateMETA{};
+    PFN_xrQueryPerformanceMetricsCounterMETA queryPerformanceMetricsCounterMETA{};
 };
 
 enum class Gfx { None, D3D11, D3D12 };
@@ -87,11 +93,22 @@ struct Session {
     std::vector<XrSwapchainImageD3D12KHR> images_d3d12{};
 
     FrameStats stats{};
-    double last_end_frame_qpc_ms{0.0};
+    double last_successful_end_frame_qpc_ms{0.0};
+    double begin_frame_qpc_ms{0.0};
     double last_upload_qpc_ms{0.0};
-    // The frame interval right after a HUD refresh carries the compositor's
-    // cost of handling our swapchain release; keep it out of the stats.
-    bool skip_next_sample{false};
+
+    // Runtime timing selection. SteamVR provides compositor-owned frame
+    // records; Meta provides runtime CPU/GPU counters; OpenXR is the universal
+    // successful-submission fallback.
+    SteamVrTiming steamvr_timing{};
+    bool runtime_is_steamvr{false};
+    bool meta_timing_available{false};
+    XrPath meta_cpu_path{XR_NULL_PATH};
+    XrPath meta_gpu_path{XR_NULL_PATH};
+    float latest_meta_cpu_ms{-1.0f};
+    float latest_meta_gpu_ms{-1.0f};
+    double last_timing_poll_qpc_ms{0.0};
+    int last_timing_source_config{-1};
 
     // Recent xrWaitFrame display periods; the HUD target is their max, since
     // some runtimes (VDXR under SSW) alternate half-periods frame to frame.
@@ -131,9 +148,10 @@ struct Session {
 };
 
 Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info,
-                        const NextFns* fns, const char* app_name);
+                        const NextFns* fns, const char* app_name, const char* runtime_name);
 void session_destroy(Session* s);
 void session_note_display_period(Session* s, XrDuration period_ns);
+void session_begin_frame(Session* s);
 
 // Runs stats + gesture + overlay injection, then calls the downchain xrEndFrame.
 XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info);

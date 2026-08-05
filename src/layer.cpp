@@ -9,6 +9,7 @@
 
 #include <openxr/openxr_loader_negotiation.h>
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -25,6 +26,7 @@ struct Global {
     xrfps::NextFns fns{};
 
     char app_name[64]{};
+    char runtime_name[XR_MAX_RUNTIME_NAME_SIZE]{};
     XrActionSet action_set{XR_NULL_HANDLE};
     XrAction grip_action{XR_NULL_HANDLE};
     XrPath hand_path[2]{XR_NULL_PATH, XR_NULL_PATH};
@@ -82,7 +84,8 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSession(XrInstance instance,
                                                     XrSession* session) {
     const XrResult r = g.fns.createSession(instance, create_info, session);
     if (XR_SUCCEEDED(r)) {
-        auto* s = xrfps::session_create(instance, *session, create_info, &g.fns, g.app_name);
+        auto* s = xrfps::session_create(instance, *session, create_info, &g.fns, g.app_name,
+                                        g.runtime_name);
         std::lock_guard<std::mutex> lock(g.mtx);
         g.sessions[*session] = s;
     }
@@ -190,6 +193,17 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrWaitFrame(XrSession session, const XrFrame
     return r;
 }
 
+XRAPI_ATTR XrResult XRAPI_CALL hook_xrBeginFrame(XrSession session,
+                                                 const XrFrameBeginInfo* begin_info) {
+    const XrResult r = g.fns.beginFrame(session, begin_info);
+    if (XR_SUCCEEDED(r)) {
+        if (xrfps::Session* s = find_session(session)) {
+            xrfps::session_begin_frame(s);
+        }
+    }
+    return r;
+}
+
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrEndFrame(XrSession session, const XrFrameEndInfo* frame_end_info) {
     if (xrfps::Session* s = find_session(session)) {
         return xrfps::session_end_frame(s, frame_end_info);
@@ -211,6 +225,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroyInstance(XrInstance instance) {
     g.fns = xrfps::NextFns{};
     g.action_set = XR_NULL_HANDLE;
     g.grip_action = XR_NULL_HANDLE;
+    g.runtime_name[0] = '\0';
     return next_destroy(instance);
 }
 
@@ -255,6 +270,7 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrGetInstanceProcAddr(XrInstance instance, 
         {"xrAttachSessionActionSets", (PFN_xrVoidFunction)hook_xrAttachSessionActionSets},
         {"xrSyncActions", (PFN_xrVoidFunction)hook_xrSyncActions},
         {"xrWaitFrame", (PFN_xrVoidFunction)hook_xrWaitFrame},
+        {"xrBeginFrame", (PFN_xrVoidFunction)hook_xrBeginFrame},
         {"xrEndFrame", (PFN_xrVoidFunction)hook_xrEndFrame},
         {"xrDestroyInstance", (PFN_xrVoidFunction)hook_xrDestroyInstance},
     };
@@ -294,6 +310,32 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     XrApiLayerCreateInfo chained = *layer_info;
     chained.nextInfo = next->next;
 
+    // Enable Meta's telemetry extension for the layer when the active runtime
+    // exposes it. API layers may add supported extensions to the downchain
+    // instance even when the application itself does not use them.
+    bool meta_metrics_supported = false;
+    PFN_xrEnumerateInstanceExtensionProperties enumerate_extensions{};
+    if (XR_SUCCEEDED(next->nextGetInstanceProcAddr(
+            XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties",
+            (PFN_xrVoidFunction*)&enumerate_extensions)) &&
+        enumerate_extensions != nullptr) {
+        uint32_t extension_count = 0;
+        if (XR_SUCCEEDED(enumerate_extensions(nullptr, 0, &extension_count, nullptr))) {
+            std::vector<XrExtensionProperties> available(
+                extension_count, {XR_TYPE_EXTENSION_PROPERTIES});
+            if (XR_SUCCEEDED(enumerate_extensions(nullptr, extension_count, &extension_count,
+                                                  available.data()))) {
+                for (const auto& extension : available) {
+                    if (std::strcmp(extension.extensionName,
+                                    XR_META_PERFORMANCE_METRICS_EXTENSION_NAME) == 0) {
+                        meta_metrics_supported = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Test aid: XRFPS_TEST_ENABLE_EXT=<name>[,<name>...] enables extra
     // instance extensions on the app's behalf (e.g. Meta XR Operator's
     // automation extension inside an off-the-shelf game). No effect unless
@@ -301,18 +343,33 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     XrInstanceCreateInfo modified_create_info = *create_info;
     std::vector<const char*> extra_extensions;
     std::vector<std::string> extra_storage;
-    char extra_env[512]{};
-    if (GetEnvironmentVariableA("XRFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
+    if (create_info->enabledExtensionCount > 0) {
         extra_extensions.assign(create_info->enabledExtensionNames,
                                 create_info->enabledExtensionNames + create_info->enabledExtensionCount);
+    }
+    const auto has_extension = [&](const char* wanted) {
+        return std::any_of(extra_extensions.begin(), extra_extensions.end(),
+                           [wanted](const char* name) { return std::strcmp(name, wanted) == 0; });
+    };
+    bool added_meta_metrics = false;
+    if (meta_metrics_supported && !has_extension(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)) {
+        extra_extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
+        added_meta_metrics = true;
+    }
+    char extra_env[512]{};
+    if (GetEnvironmentVariableA("XRFPS_TEST_ENABLE_EXT", extra_env, sizeof(extra_env)) > 0) {
         char* context = nullptr;
         for (char* token = strtok_s(extra_env, ",", &context); token != nullptr;
              token = strtok_s(nullptr, ",", &context)) {
             extra_storage.emplace_back(token);
         }
         for (const std::string& name : extra_storage) {
-            extra_extensions.push_back(name.c_str());
+            if (!has_extension(name.c_str())) {
+                extra_extensions.push_back(name.c_str());
+            }
         }
+    }
+    if (extra_extensions.size() != create_info->enabledExtensionCount) {
         modified_create_info.enabledExtensionNames = extra_extensions.data();
         modified_create_info.enabledExtensionCount = (uint32_t)extra_extensions.size();
         create_info = &modified_create_info;
@@ -325,17 +382,22 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     if (!extra_storage.empty()) {
         flog("enabled %u extra extension(s) via XRFPS_TEST_ENABLE_EXT", (unsigned)extra_storage.size());
     }
+    if (added_meta_metrics) {
+        flog("enabled %s for runtime timing", XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
+    }
 
     g.instance = *instance;
     g.next_gipa = next->nextGetInstanceProcAddr;
 
     load_next("xrDestroyInstance", g.fns.destroyInstance);
+    load_next("xrGetInstanceProperties", g.fns.getInstanceProperties);
     load_next("xrCreateSession", g.fns.createSession);
     load_next("xrDestroySession", g.fns.destroySession);
     load_next("xrSuggestInteractionProfileBindings", g.fns.suggestBindings);
     load_next("xrAttachSessionActionSets", g.fns.attachActionSets);
     load_next("xrSyncActions", g.fns.syncActions);
     load_next("xrWaitFrame", g.fns.waitFrame);
+    load_next("xrBeginFrame", g.fns.beginFrame);
     load_next("xrEndFrame", g.fns.endFrame);
     load_next("xrStringToPath", g.fns.stringToPath);
     load_next("xrCreateActionSet", g.fns.createActionSet);
@@ -353,11 +415,23 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     load_next("xrAcquireSwapchainImage", g.fns.acquireSwapchainImage);
     load_next("xrWaitSwapchainImage", g.fns.waitSwapchainImage);
     load_next("xrReleaseSwapchainImage", g.fns.releaseSwapchainImage);
+    load_next("xrEnumeratePerformanceMetricsCounterPathsMETA",
+              g.fns.enumeratePerformanceMetricsCounterPathsMETA);
+    load_next("xrSetPerformanceMetricsStateMETA", g.fns.setPerformanceMetricsStateMETA);
+    load_next("xrQueryPerformanceMetricsCounterMETA", g.fns.queryPerformanceMetricsCounterMETA);
     g.fns.getInstanceProcAddr = g.next_gipa;
+
+    if (g.fns.getInstanceProperties != nullptr) {
+        XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
+        if (XR_SUCCEEDED(g.fns.getInstanceProperties(g.instance, &properties))) {
+            strncpy_s(g.runtime_name, sizeof(g.runtime_name), properties.runtimeName, _TRUNCATE);
+        }
+    }
 
     create_our_actions();
     strncpy_s(g.app_name, sizeof(g.app_name), create_info->applicationInfo.applicationName, _TRUNCATE);
-    flog("instance ready (app: %s)", create_info->applicationInfo.applicationName);
+    flog("instance ready (app: %s, runtime: %s)", create_info->applicationInfo.applicationName,
+         g.runtime_name);
     return XR_SUCCESS;
 }
 

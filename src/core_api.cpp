@@ -23,6 +23,7 @@ xrfps::Config from_abi(const XrFpsConfigAbi& in) {
     c.show_delay_sec = in.show_delay_sec;
     c.hide_delay_sec = in.hide_delay_sec;
     c.f10_toggle = in.f10_toggle != 0;
+    c.timing_source = in.timing_source;
     c.panel_width_m = in.panel_width_m;
     c.panel_offset_m = in.panel_offset_m;
     c.panel_roll_deg = in.panel_roll_deg;
@@ -30,9 +31,12 @@ xrfps::Config from_abi(const XrFpsConfigAbi& in) {
     c.hud_refresh_hz = in.hud_refresh_hz;
     c.theme = in.theme;
     c.show_graph = in.show_graph != 0;
+    c.graph_mode = in.graph_mode;
     c.graph_height = in.graph_height;
     c.show_fps = in.show_fps != 0;
     c.show_frametime = in.show_frametime != 0;
+    c.show_cpu_frametime = in.show_cpu_frametime != 0;
+    c.show_gpu_frametime = in.show_gpu_frametime != 0;
     c.show_target = in.show_target != 0;
     c.show_on_target = in.show_on_target != 0;
     c.show_percentiles = in.show_percentiles != 0;
@@ -54,6 +58,7 @@ void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->show_delay_sec = c.show_delay_sec;
     out->hide_delay_sec = c.hide_delay_sec;
     out->f10_toggle = c.f10_toggle;
+    out->timing_source = c.timing_source;
     out->panel_width_m = c.panel_width_m;
     out->panel_offset_m = c.panel_offset_m;
     out->panel_roll_deg = c.panel_roll_deg;
@@ -61,9 +66,12 @@ void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->hud_refresh_hz = c.hud_refresh_hz;
     out->theme = c.theme;
     out->show_graph = c.show_graph;
+    out->graph_mode = c.graph_mode;
     out->graph_height = c.graph_height;
     out->show_fps = c.show_fps;
     out->show_frametime = c.show_frametime;
+    out->show_cpu_frametime = c.show_cpu_frametime;
+    out->show_gpu_frametime = c.show_gpu_frametime;
     out->show_target = c.show_target;
     out->show_on_target = c.show_on_target;
     out->show_percentiles = c.show_percentiles;
@@ -123,6 +131,10 @@ void xrfps_hud_render(const XrFpsConfigAbi* config, int32_t use_live_metrics,
     // A plausible recent history so the preview reads like a live session.
     FrameStats stats{};
     stats.target_ms = target;
+    stats.source = config->timing_source == 1
+                       ? TimingBackend::SteamVR
+                       : (config->timing_source == 2 ? TimingBackend::Meta
+                                                     : TimingBackend::OpenXR);
     for (int i = 0; i < 320; ++i) {
         float ms = target * (0.94f + 0.05f * std::sin((float)i * 0.11f));
         if (i % 53 == 0) {
@@ -131,7 +143,9 @@ void xrfps_hud_render(const XrFpsConfigAbi* config, int32_t use_live_metrics,
         if (i > 210 && i < 240) {
             ms += target * 0.45f;
         }
-        stats.push(ms);
+        const float cpu = target * (0.42f + 0.06f * std::sin((float)i * 0.07f));
+        const float gpu = target * (0.72f + 0.08f * std::sin((float)i * 0.13f));
+        stats.push(ms, cpu, gpu);
     }
 
     const xrfps::Config cfg = from_abi(*config);
@@ -181,6 +195,14 @@ void xrfps_metrics_get(XrFpsMetricsAbi* out) {
     out->ram_total_gb = m.ram_total_gb;
     out->app_pid = m.app_pid;
     strncpy_s(out->app_name, sizeof(out->app_name), m.app_name, _TRUNCATE);
+    out->app_fps = m.app_fps;
+    out->app_frame_ms = m.app_frame_ms;
+    out->app_cpu_frame_ms = m.app_cpu_frame_ms;
+    out->app_gpu_frame_ms = m.app_gpu_frame_ms;
+    out->timing_source = m.timing_source;
+    out->requested_timing_source = m.requested_timing_source;
+    strncpy_s(out->timing_source_name, sizeof(out->timing_source_name), m.timing_source_name,
+              _TRUNCATE);
     out->running = g_collector.running() ? 1 : 0;
 }
 

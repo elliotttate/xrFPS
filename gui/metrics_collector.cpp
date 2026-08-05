@@ -161,15 +161,36 @@ void MetricsCollector::detect_vr_app() {
         if (session_mapping_ != nullptr) {
             session_view_ = (const SharedSession*)MapViewOfFile(session_mapping_, FILE_MAP_READ, 0, 0,
                                                                 sizeof(SharedSession));
+            if (session_view_ == nullptr) {
+                CloseHandle((HANDLE)session_mapping_);
+                session_mapping_ = nullptr;
+            }
         }
     }
 
     if (session_view_ != nullptr && session_view_->fresh(GetTickCount64())) {
         vr_pid_ = session_view_->pid;
         vr_name_ = session_view_->app_name;
+        if (session_view_->version >= 2) {
+            latest_.app_fps = session_view_->app_fps;
+            latest_.app_frame_ms = session_view_->app_frame_ms;
+            latest_.app_cpu_frame_ms = session_view_->app_cpu_frame_ms;
+            latest_.app_gpu_frame_ms = session_view_->app_gpu_frame_ms;
+            latest_.timing_source = session_view_->timing_source;
+            latest_.requested_timing_source = session_view_->requested_timing_source;
+            std::snprintf(latest_.timing_source_name, sizeof(latest_.timing_source_name), "%s",
+                          session_view_->timing_source_name);
+        }
     } else {
         vr_pid_ = 0;
         vr_name_.clear();
+        latest_.app_fps = -1.0f;
+        latest_.app_frame_ms = -1.0f;
+        latest_.app_cpu_frame_ms = -1.0f;
+        latest_.app_gpu_frame_ms = -1.0f;
+        latest_.timing_source = 0;
+        latest_.requested_timing_source = 0;
+        latest_.timing_source_name[0] = '\0';
     }
 }
 

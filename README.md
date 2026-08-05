@@ -11,9 +11,11 @@ any specific engine or runtime) and draws nothing until you flip a controller.
 
 ## How it works
 
-- The layer sits in the OpenXR call chain of the host application. At
-  `xrEndFrame` it measures the interval between frame submissions — the app's
-  real pacing against the runtime — and keeps a ring buffer of recent frames.
+- The layer sits in the OpenXR call chain of the host application and selects
+  the best timing source exposed by the active runtime. SteamVR compositor
+  history supplies presented application frames plus CPU/GPU timings;
+  `XR_META_performance_metrics` supplies Meta CPU/GPU timings; successful
+  `xrEndFrame` submissions supply FPS when the runtime has no compositor FPS API.
 - It quietly appends its own action set (a single grip-pose action) to the
   app's suggested bindings, attached action sets, and per-frame sync. That
   gives it controller poses without touching the app's input.
@@ -25,9 +27,10 @@ any specific engine or runtime) and draws nothing until you flip a controller.
   action sets, or when you don't have controllers handy).
 
 The HUD shows current FPS (color-coded against the runtime's refresh target),
-average frametime in milliseconds, the target frametime, and a scrolling
-per-frame graph with the target as a dashed line — green at target, amber for
-minor misses, red for spikes.
+average frametime in milliseconds, the target frametime, and either a scrolling
+application-frametime graph, combined CPU/GPU traces, or two separately framed
+CPU and GPU graphs. Auto chooses the combined graph when both workload counters
+are available.
 
 Its proportional, anti-aliased typography uses the Windows Segoe UI family
 with a built-in proportional bitmap fallback. Six headset-tuned themes cover
@@ -52,10 +55,10 @@ up changes without restarting:
 - **Gesture** — which controller, how far it must rotate, show/hide delays.
 - **Placement & look** — panel size, distance off the controller, roll,
   opacity, one of six HUD themes, and how often the HUD repaints.
-- **Readouts** — choose the HUD rows: FPS, frametime, target, on-target %,
-  1% low, and the frametime graph, plus system metrics (CPU and GPU usage,
-  this app's own GPU share, VRAM, GPU clock/temperature, RAM). The app marks
-  hardware-specific counters unavailable when their data source is missing.
+- **Readouts** — choose Auto, SteamVR, Meta, or OpenXR frame timing; select an
+  automatic, application, combined CPU/GPU, or separate CPU and GPU graph; and choose the HUD rows: FPS,
+  application/CPU/GPU frametime, target, on-target %, 1% low, and system
+  metrics. The live status identifies the source Auto actually selected.
 - **Preview** — rendered by the layer's own HUD code with 72, 80, 90, 120, and
   144 Hz targets. It matches the HUD layout and live values; scene brightness
   and the runtime compositor can still affect the final headset appearance.
@@ -90,6 +93,8 @@ Targets:
 - `app/` — the WinUI 3 Control Center (needs the .NET 9 SDK).
 - `xrfps_hudtest` — renders the HUD to a BMP for quick visual iteration,
   no headset required.
+- `xrfps_timing_probe` — manually verifies the SteamVR compositor reader and
+  prints its latest frame, CPU, and GPU timings.
 - `xrfps_testapp` — a minimal OpenXR app (D3D11 by default, `--d3d12` for
   D3D12) that clears the view, suggests bindings, attaches an action set, and
   runs the frame loop, for exercising the layer end-to-end — e.g. against
@@ -123,16 +128,16 @@ implements core OpenXR quad layers works.
 
 Notes and limits:
 
-- xrFPS measures the **frame interval** — the wall-clock cadence of the
-  app's `xrEndFrame` submissions. That's delivered smoothness: at a locked
-  90 fps it reads ~11.1 ms even if the GPU only needed 6, because vsync
-  pacing quantizes delivery. Tools like fpsVR report CPU/GPU **workload
-  times** instead; the numbers only coincide when the GPU is saturated.
-  Core OpenXR does not expose a portable CPU/GPU workload split, and a layer
-  does not own all of the app's command queues. Some runtimes expose those
-  counters through optional performance-metrics extensions, but they are not
-  currently displayed. The interval after each HUD refresh is excluded from
-  the stats so the overlay's own compositor cost never pollutes the graph.
+- **Auto timing** prefers `XR_META_performance_metrics` on Meta runtimes and
+  SteamVR `IVRCompositor::GetFrameTimings` on SteamVR. On another runtime it
+  reports successful OpenXR submission cadence and labels the HUD accordingly.
+  Core OpenXR does not expose portable GPU workload time, so the GPU trace is
+  unavailable in that fallback instead of being estimated from incomplete D3D
+  timestamps. Its CPU value is explicitly the `xrBeginFrame`-to-`xrEndFrame`
+  submission span.
+- FPS uses approximately one second of elapsed time at every refresh rate and
+  counts only successful submissions. HUD upload time is intentionally retained
+  in fallback timing, so the overlay cannot hide a hitch it introduced.
 - ON TGT shows what fraction of recent frames hit the target period —
   the fastest way to see "peak rate" vs "actually delivered rate" apart.
 - Apps that never attach action sets get no flip gesture (nothing to bind

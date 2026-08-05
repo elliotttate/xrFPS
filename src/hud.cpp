@@ -162,6 +162,29 @@ struct Canvas {
         }
     }
 
+    void line(int x0, int y0, int x1, int y1, Color c, int thickness = 1) {
+        const int dx = std::abs(x1 - x0);
+        const int sx = x0 < x1 ? 1 : -1;
+        const int dy = -std::abs(y1 - y0);
+        const int sy = y0 < y1 ? 1 : -1;
+        int error = dx + dy;
+        for (;;) {
+            fill(x0 - thickness / 2, y0 - thickness / 2, thickness, thickness, c);
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+            const int twice = 2 * error;
+            if (twice >= dy) {
+                error += dy;
+                x0 += sx;
+            }
+            if (twice <= dx) {
+                error += dx;
+                y0 += sy;
+            }
+        }
+    }
+
     static bool inside_round(int x, int y, int x0, int y0, int w, int h, int radius) {
         if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) {
             return false;
@@ -336,6 +359,8 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
 
     const float avg_ms = stats.avg();
     const float fps = stats.fps();
+    const float cpu_ms = stats.cpu_avg();
+    const float gpu_ms = stats.gpu_avg();
     const float target = stats.target_ms > 0.5f ? stats.target_ms : 11.111f;
 
     const auto severity = [&](float ms) {
@@ -363,7 +388,13 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
     int header_bottom = 18;
     if (config.show_fps) {
         cv.rounded_fill(16, 13, 5, 43, 3, th.accent);
-        cv.text(29, 9, 1, "LIVE FRAME RATE", th.dim);
+        const char* headline = "OPENXR SUBMISSION RATE";
+        if (stats.source == TimingBackend::SteamVR) {
+            headline = "STEAMVR APP FRAME RATE";
+        } else if (stats.source == TimingBackend::Meta) {
+            headline = "META + OPENXR APP RATE";
+        }
+        cv.text(29, 9, 1, headline, th.dim);
         snprintf(buf, sizeof(buf), "%.0f", fps);
         cv.text(27, 22, 4, buf, severity(avg_ms));
         const int number_width = cv.text_w(buf, 4);
@@ -374,8 +405,18 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
     // Stacked values remain compact so the graph keeps useful vertical space.
     RowStack rows{cv, HUD_W - 20, 12, 2, 20};
     if (config.show_frametime) {
-        snprintf(buf, sizeof(buf), "%.2f ms", avg_ms);
+        snprintf(buf, sizeof(buf), "Frame %.2f ms", avg_ms);
         rows.add(buf, th.text);
+    }
+    if (config.show_cpu_frametime && cpu_ms > 0.0f) {
+        snprintf(buf, sizeof(buf), stats.source == TimingBackend::OpenXR ? "CPU span %.2f ms"
+                                                                        : "CPU %.2f ms",
+                 cpu_ms);
+        rows.add(buf, th.target);
+    }
+    if (config.show_gpu_frametime && gpu_ms > 0.0f) {
+        snprintf(buf, sizeof(buf), "GPU %.2f ms", gpu_ms);
+        rows.add(buf, th.accent);
     }
     if (config.show_target) {
         snprintf(buf, sizeof(buf), "Target %.1f", target);
@@ -454,44 +495,125 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
 
     const int gy = std::max({header_bottom + 5, rows.y + 2, metrics_bottom + 3});
     const int max_graph_h = HUD_H - gy - 12;
-    if (max_graph_h < 24) {
+    const bool separate_graphs = config.graph_mode == 3;
+    constexpr int min_graph_h = 24;
+    if (max_graph_h < min_graph_h) {
         return;
     }
-    const int gh = std::clamp(config.graph_height, 24, max_graph_h);
+    const int gh = std::clamp(config.graph_height, min_graph_h, max_graph_h);
     constexpr int kGx = 16;
     constexpr int kGw = HUD_W - 32;
     constexpr int kInset = 7;
     constexpr int kBarW = 2;
-    constexpr int kPlotX = kGx + kInset;
-    constexpr int kPlotW = kGw - kInset * 2;
-    constexpr int kBars = kPlotW / kBarW;
-
-    cv.rounded_fill(kGx - 1, gy - 1, kGw + 2, gh + 2, 9, th.border);
-    cv.rounded_fill(kGx, gy, kGw, gh, 8, th.graph_bg);
-    for (int grid = 1; grid <= 3; ++grid) {
-        const int y = gy + (gh * grid) / 4;
-        cv.fill(kPlotX, y, kPlotW, 1, th.grid);
-    }
 
     // A stable target-relative scale keeps consecutive frames comparable.
     const float peak = target * 2.5f;
-    const int avail = std::min(stats.count, kBars);
-    const auto ms_to_y = [&](float ms) {
+    const auto ms_to_y = [&](float ms, int panel_y, int panel_h) {
         const float t = std::clamp(ms / peak, 0.0f, 1.0f);
-        return gy + gh - 5 - (int)(t * (float)(gh - 10));
+        return panel_y + panel_h - 5 - (int)(t * (float)(panel_h - 10));
+    };
+    const auto draw_panel = [&](int panel_x, int panel_y, int panel_w, int panel_h) {
+        cv.rounded_fill(panel_x - 1, panel_y - 1, panel_w + 2, panel_h + 2, 9, th.border);
+        cv.rounded_fill(panel_x, panel_y, panel_w, panel_h, 8, th.graph_bg);
+        const int plot_x = panel_x + kInset;
+        const int plot_w = panel_w - kInset * 2;
+        for (int grid = 1; grid <= 3; ++grid) {
+            const int y = panel_y + (panel_h * grid) / 4;
+            cv.fill(plot_x, y, plot_w, 1, th.grid);
+        }
+    };
+    const auto draw_target = [&](int panel_x, int panel_y, int panel_w, int panel_h) {
+        const int plot_x = panel_x + kInset;
+        const int plot_w = panel_w - kInset * 2;
+        const int ty = ms_to_y(target, panel_y, panel_h);
+        for (int x = plot_x; x < plot_x + plot_w; x += 12) {
+            cv.fill(x, ty, 7, 1, th.target);
+        }
+        return ty;
+    };
+    const auto draw_trace = [&](int panel_x, int panel_y, int panel_w, int panel_h, Color color,
+                                bool cpu) {
+        const int plot_x = panel_x + kInset;
+        const int plot_w = panel_w - kInset * 2;
+        const int avail = std::min(stats.count, plot_w / kBarW);
+        int previous_x = 0;
+        int previous_y = 0;
+        bool previous = false;
+        for (int i = 0; i < avail; ++i) {
+            const int sample_index = stats.count - avail + i;
+            const int x = plot_x + plot_w - (avail - i) * kBarW + kBarW / 2;
+            const float value = cpu ? stats.cpu_sample(sample_index)
+                                    : stats.gpu_sample(sample_index);
+            if (value > 0.0f) {
+                const int y = ms_to_y(value, panel_y, panel_h);
+                if (previous) {
+                    cv.line(previous_x, previous_y, x, y, color, 2);
+                }
+                previous_y = y;
+                previous = true;
+            } else {
+                previous = false;
+            }
+            previous_x = x;
+        }
+    };
+    const auto draw_panel_label = [&](int panel_x, int panel_y, const char* name, float value,
+                                      Color color) {
+        char label[32];
+        if (value > 0.0f) {
+            snprintf(label, sizeof(label), "%s %.2f ms", name, value);
+        } else {
+            snprintf(label, sizeof(label), "%s unavailable", name);
+        }
+        const int label_w = cv.text_w(label, 1);
+        const int plot_x = panel_x + kInset;
+        cv.rounded_fill(plot_x + 3, panel_y + 3, label_w + 22, 17, 6, th.graph_bg);
+        cv.fill(plot_x + 9, panel_y + 10, 10, 2, color);
+        cv.text(plot_x + 24, panel_y + 4, 1, label, value > 0.0f ? color : th.dim);
     };
 
-    for (int i = 0; i < avail; ++i) {
-        const float ms = stats.sample(stats.count - avail + i);
-        const int y = ms_to_y(ms);
-        const int x = kPlotX + kPlotW - (avail - i) * kBarW;
-        cv.fill(x, y, kBarW, gy + gh - 5 - y, severity(ms));
+    if (separate_graphs) {
+        constexpr int kGap = 7;
+        const int cpu_w = (kGw - kGap) / 2;
+        const int gpu_x = kGx + cpu_w + kGap;
+        const int gpu_w = kGx + kGw - gpu_x;
+
+        draw_panel(kGx, gy, cpu_w, gh);
+        draw_panel(gpu_x, gy, gpu_w, gh);
+        draw_trace(kGx, gy, cpu_w, gh, th.target, true);
+        draw_trace(gpu_x, gy, gpu_w, gh, th.accent, false);
+        draw_target(kGx, gy, cpu_w, gh);
+        draw_target(gpu_x, gy, gpu_w, gh);
+        draw_panel_label(kGx, gy, "CPU", cpu_ms, th.target);
+        draw_panel_label(gpu_x, gy, "GPU", gpu_ms, th.accent);
+        return;
     }
 
-    const int ty = ms_to_y(target);
-    for (int x = kPlotX; x < kPlotX + kPlotW; x += 12) {
-        cv.fill(x, ty, 7, 1, th.target);
+    constexpr int kPlotX = kGx + kInset;
+    constexpr int kPlotW = kGw - kInset * 2;
+    constexpr int kBars = kPlotW / kBarW;
+    const int avail = std::min(stats.count, kBars);
+    draw_panel(kGx, gy, kGw, gh);
+    const bool combined_graph = config.graph_mode == 2 ||
+                                (config.graph_mode == 0 && stats.has_cpu() && stats.has_gpu());
+    if (!combined_graph) {
+        for (int i = 0; i < avail; ++i) {
+            const float value = stats.sample(stats.count - avail + i);
+            const int y = ms_to_y(value, gy, gh);
+            const int x = kPlotX + kPlotW - (avail - i) * kBarW;
+            cv.fill(x, y, kBarW, gy + gh - 5 - y, severity(value));
+        }
+    } else {
+        draw_trace(kGx, gy, kGw, gh, th.target, true);
+        draw_trace(kGx, gy, kGw, gh, th.accent, false);
+        cv.rounded_fill(kPlotX + 3, gy + 3, 76, 18, 6, th.graph_bg);
+        cv.fill(kPlotX + 9, gy + 9, 12, 2, th.target);
+        cv.text(kPlotX + 25, gy + 4, 1, "CPU", th.target);
+        cv.fill(kPlotX + 48, gy + 9, 12, 2, th.accent);
+        cv.text(kPlotX + 64, gy + 4, 1, "GPU", th.accent);
     }
+
+    const int ty = draw_target(kGx, gy, kGw, gh);
 
     snprintf(buf, sizeof(buf), "Target %.1f ms", target);
     const int label_width = cv.text_w(buf, 1);

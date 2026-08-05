@@ -32,11 +32,14 @@ struct BmpHeader {
 
 int main(int argc, char** argv) {
     bool dense = false;
+    bool separate = false;
     int theme = 0;
     const char* path = "hudtest.bmp";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--dense") == 0) {
             dense = true;
+        } else if (std::strcmp(argv[i], "--separate") == 0) {
+            separate = true;
         } else if (std::strcmp(argv[i], "--theme") == 0 && i + 1 < argc) {
             theme = std::clamp(std::atoi(argv[++i]), 0, 5);
         } else {
@@ -55,12 +58,14 @@ int main(int argc, char** argv) {
         if (i > 260 && i < 300) {
             m += 6.5f;
         }
-        stats.push(m);
+        stats.push(m, 4.8f + 0.4f * std::sin((float)i * 0.06f),
+                   7.6f + 0.8f * std::sin((float)i * 0.11f));
     }
 
     xrfps::Config config{};
     config.theme = theme;
     config.show_percentiles = true;
+    config.graph_mode = separate ? 3 : 0;
     xrfps::SharedMetrics metrics{};
     const xrfps::SharedMetrics* metric_source = nullptr;
     if (dense) {
@@ -100,7 +105,11 @@ int main(int argc, char** argv) {
                     ++border_pixels;
                 }
             }
-            if (border_pixels > HUD_W - 64) {
+            // Two side-by-side panels have four rounded outer corners and a
+            // center gap, so their combined straight border is slightly
+            // shorter than the single-panel graph.
+            const int required_border = separate ? HUD_W - 112 : HUD_W - 64;
+            if (border_pixels > required_border) {
                 ++graph_border_rows;
             }
         }

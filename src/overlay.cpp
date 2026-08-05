@@ -1,8 +1,11 @@
 #include "overlay.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 #include "hud.h"
 #include "log.h"
@@ -223,8 +226,6 @@ bool update_content(Session* s) {
     s->fns->releaseSwapchainImage(s->swapchain, &release);
     s->ever_uploaded = true;
     s->last_upload_qpc_ms = now;
-    s->skip_next_sample = true;
-
     // Diagnostics: a refresh that visibly stalls the host frame is a bug —
     // report where the time went (throttled to one line per 2 s).
     const double total = qpc_ms() - now;
@@ -355,14 +356,163 @@ void update_gesture(Session* s, XrTime display_time) {
     }
 }
 
+bool contains_case_insensitive(const char* text, const char* needle) {
+    if (text == nullptr || needle == nullptr) {
+        return false;
+    }
+    std::string haystack{text};
+    std::string wanted{needle};
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    std::transform(wanted.begin(), wanted.end(), wanted.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    return haystack.find(wanted) != std::string::npos;
+}
+
+const char* timing_source_name(const Session* s) {
+    switch (s->stats.source) {
+    case TimingBackend::SteamVR:
+        if (s->config.timing_source == 0 && s->meta_cpu_path != XR_NULL_PATH &&
+            s->meta_gpu_path != XR_NULL_PATH) {
+            return "SteamVR + Meta CPU/GPU";
+        }
+        if (s->config.timing_source == 0 && s->meta_gpu_path != XR_NULL_PATH) {
+            return "SteamVR + Meta GPU";
+        }
+        if (s->config.timing_source == 0 && s->meta_cpu_path != XR_NULL_PATH) {
+            return "SteamVR + Meta CPU";
+        }
+        return "SteamVR compositor";
+    case TimingBackend::Meta:
+        return "Meta metrics + OpenXR FPS";
+    case TimingBackend::OpenXR:
+    default:
+        return s->config.timing_source == 0 || s->config.timing_source == 3
+                   ? "OpenXR submissions"
+                   : "OpenXR fallback";
+    }
+}
+
+void initialize_meta_timing(Session* s, XrInstance instance) {
+    if (s->fns->setPerformanceMetricsStateMETA == nullptr ||
+        s->fns->enumeratePerformanceMetricsCounterPathsMETA == nullptr ||
+        s->fns->queryPerformanceMetricsCounterMETA == nullptr) {
+        return;
+    }
+
+    XrPerformanceMetricsStateMETA state{XR_TYPE_PERFORMANCE_METRICS_STATE_META};
+    state.enabled = XR_TRUE;
+    const XrResult enabled = s->fns->setPerformanceMetricsStateMETA(s->session, &state);
+    if (XR_FAILED(enabled)) {
+        flog("Meta performance metrics could not be enabled (%d)", enabled);
+        return;
+    }
+
+    s->fns->stringToPath(instance, "/perfmetrics_meta/app/cpu_frametime", &s->meta_cpu_path);
+    s->fns->stringToPath(instance, "/perfmetrics_meta/app/gpu_frametime", &s->meta_gpu_path);
+
+    uint32_t count = 0;
+    if (XR_FAILED(s->fns->enumeratePerformanceMetricsCounterPathsMETA(instance, 0, &count, nullptr)) ||
+        count == 0) {
+        return;
+    }
+    std::vector<XrPath> paths(count);
+    if (XR_FAILED(s->fns->enumeratePerformanceMetricsCounterPathsMETA(
+            instance, count, &count, paths.data()))) {
+        return;
+    }
+    const bool has_cpu = std::find(paths.begin(), paths.end(), s->meta_cpu_path) != paths.end();
+    const bool has_gpu = std::find(paths.begin(), paths.end(), s->meta_gpu_path) != paths.end();
+    s->meta_timing_available = has_cpu || has_gpu;
+    if (!has_cpu) {
+        s->meta_cpu_path = XR_NULL_PATH;
+    }
+    if (!has_gpu) {
+        s->meta_gpu_path = XR_NULL_PATH;
+    }
+    if (s->meta_timing_available) {
+        flog("Meta performance metrics ready: cpu=%d gpu=%d", (int)has_cpu, (int)has_gpu);
+    }
+}
+
+float query_meta_counter(Session* s, XrPath path) {
+    if (path == XR_NULL_PATH) {
+        return -1.0f;
+    }
+    XrPerformanceMetricsCounterMETA counter{XR_TYPE_PERFORMANCE_METRICS_COUNTER_META};
+    if (XR_FAILED(s->fns->queryPerformanceMetricsCounterMETA(s->session, path, &counter)) ||
+        counter.counterUnit != XR_PERFORMANCE_METRICS_COUNTER_UNIT_MILLISECONDS_META) {
+        return -1.0f;
+    }
+    if ((counter.counterFlags & XR_PERFORMANCE_METRICS_COUNTER_FLOAT_VALUE_VALID_BIT_META) != 0) {
+        return counter.floatValue > 0.0f ? counter.floatValue : -1.0f;
+    }
+    if ((counter.counterFlags & XR_PERFORMANCE_METRICS_COUNTER_UINT_VALUE_VALID_BIT_META) != 0) {
+        return counter.uintValue > 0 ? (float)counter.uintValue : -1.0f;
+    }
+    return -1.0f;
+}
+
+void poll_timing_source(Session* s, double now) {
+    // Runtime calls can involve IPC. 20 Hz is fast enough for a 6.7 Hz HUD,
+    // while SteamVR returns every intervening frame so its graph stays dense.
+    if (now - s->last_timing_poll_qpc_ms < 50.0) {
+        return;
+    }
+    s->last_timing_poll_qpc_ms = now;
+
+    const int requested = std::clamp(s->config.timing_source, 0, 3);
+    const bool auto_mode = requested == 0;
+    const bool want_meta = requested == 2 || (auto_mode && s->meta_timing_available);
+    const bool want_steamvr = s->runtime_is_steamvr && (requested == 1 || auto_mode);
+
+    if (want_meta && s->meta_timing_available) {
+        s->latest_meta_cpu_ms = query_meta_counter(s, s->meta_cpu_path);
+        s->latest_meta_gpu_ms = query_meta_counter(s, s->meta_gpu_path);
+    }
+
+    std::array<RuntimeTimingSample, 128> steam_samples{};
+    int steam_count = 0;
+    if (want_steamvr) {
+        steam_count = s->steamvr_timing.collect(steam_samples.data(), (int)steam_samples.size());
+    }
+
+    TimingBackend selected = TimingBackend::OpenXR;
+    if (want_steamvr && s->steamvr_timing.ready()) {
+        selected = TimingBackend::SteamVR;
+    } else if (want_meta && s->meta_timing_available) {
+        selected = TimingBackend::Meta;
+    }
+
+    if (s->last_timing_source_config != requested || s->stats.source != selected) {
+        s->last_timing_source_config = requested;
+        s->stats.clear(selected);
+        flog("timing source: requested=%d active=%s", requested, timing_source_name(s));
+    }
+
+    if (selected == TimingBackend::SteamVR) {
+        for (int i = 0; i < steam_count; ++i) {
+            const float cpu = auto_mode && s->latest_meta_cpu_ms > 0.0f
+                                  ? s->latest_meta_cpu_ms
+                                  : steam_samples[i].cpu_ms;
+            const float gpu = auto_mode && s->latest_meta_gpu_ms > 0.0f
+                                  ? s->latest_meta_gpu_ms
+                                  : steam_samples[i].gpu_ms;
+            s->stats.push(steam_samples[i].frame_ms, cpu, gpu);
+        }
+    }
+}
+
 } // namespace
 
 Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info,
-                        const NextFns* fns, const char* app_name) {
+                         const NextFns* fns, const char* app_name, const char* runtime_name) {
     auto* s = new Session();
     s->fns = fns;
     s->session = session;
     s->session_info.start(app_name);
+    s->runtime_is_steamvr = contains_case_insensitive(runtime_name, "steamvr") ||
+                            contains_case_insensitive(runtime_name, "valve");
 
     for (const auto* entry = (const XrBaseInStructure*)create_info->next; entry != nullptr;
          entry = entry->next) {
@@ -394,8 +544,9 @@ Session* session_create(XrInstance instance, XrSession session, const XrSessionC
 
     s->config.load(); // absent file keeps the defaults
     s->config_stamp = Config::stamp();
+    initialize_meta_timing(s, instance);
 
-    flog("session created: gfx=%s maxLayers=%u",
+    flog("session created: runtime=%s gfx=%s maxLayers=%u", runtime_name != nullptr ? runtime_name : "",
          s->gfx == Gfx::D3D11 ? "d3d11" : (s->gfx == Gfx::D3D12 ? "d3d12" : "unsupported"),
          s->max_layers);
     return s;
@@ -452,16 +603,12 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
     }
 }
 
+void session_begin_frame(Session* s) {
+    s->begin_frame_qpc_ms = qpc_ms();
+}
+
 XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     const double now = qpc_ms();
-    if (s->last_end_frame_qpc_ms > 0.0) {
-        if (s->skip_next_sample) {
-            s->skip_next_sample = false;
-        } else {
-            s->stats.push((float)(now - s->last_end_frame_qpc_ms));
-        }
-    }
-    s->last_end_frame_qpc_ms = now;
     s->session_info.beat();
 
     // Pick up Control Center edits without restarting the game. One file
@@ -477,41 +624,60 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
         }
     }
 
+    poll_timing_source(s, now);
+
     update_gesture(s, frame_end_info->displayTime);
 
+    const XrFrameEndInfo* submit_info = frame_end_info;
+    XrFrameEndInfo modified{XR_TYPE_FRAME_END_INFO};
     const bool show = s->config.enabled && ((s->visible && s->anchor_valid) || s->force_show);
-    if (!show || s->gfx == Gfx::None || frame_end_info->layerCount + 1 > s->max_layers) {
-        return s->fns->endFrame(s->session, frame_end_info);
+    if (show && s->gfx != Gfx::None && frame_end_info->layerCount + 1 <= s->max_layers &&
+        ensure_swapchain(s) && update_content(s)) {
+        s->quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+        s->quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                             XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+        s->quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        s->quad.subImage.swapchain = s->swapchain;
+        s->quad.subImage.imageRect = {{0, 0}, {HUD_W, HUD_H}};
+        const float width_m = std::clamp(s->config.panel_width_m, 0.05f, 2.0f);
+        s->quad.size = {width_m, width_m * kQuadAspect};
+        if (s->visible && s->anchor_valid) {
+            s->quad.space = s->ref_space;
+            s->quad.pose = s->anchor_pose;
+        } else {
+            s->quad.space = s->view_space;
+            s->quad.pose = {{0, 0, 0, 1}, {0.0f, -0.15f, -0.8f}};
+        }
+
+        s->layer_scratch.assign(frame_end_info->layers,
+                                frame_end_info->layers + frame_end_info->layerCount);
+        s->layer_scratch.push_back((const XrCompositionLayerBaseHeader*)&s->quad);
+        modified = *frame_end_info;
+        modified.layers = s->layer_scratch.data();
+        modified.layerCount = (uint32_t)s->layer_scratch.size();
+        submit_info = &modified;
     }
 
-    if (!ensure_swapchain(s) || !update_content(s)) {
-        return s->fns->endFrame(s->session, frame_end_info);
+    const float cpu_submission_ms = s->begin_frame_qpc_ms > 0.0
+                                        ? (float)(now - s->begin_frame_qpc_ms)
+                                        : -1.0f;
+    const XrResult result = s->fns->endFrame(s->session, submit_info);
+    const double completed = qpc_ms();
+    if (XR_SUCCEEDED(result)) {
+        if (s->stats.source != TimingBackend::SteamVR &&
+            s->last_successful_end_frame_qpc_ms > 0.0) {
+            const float frame_ms = (float)(completed - s->last_successful_end_frame_qpc_ms);
+            if (s->stats.source == TimingBackend::Meta) {
+                s->stats.push(frame_ms, s->latest_meta_cpu_ms, s->latest_meta_gpu_ms);
+            } else {
+                s->stats.push(frame_ms, cpu_submission_ms, -1.0f);
+            }
+        }
+        s->last_successful_end_frame_qpc_ms = completed;
     }
-
-    s->quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
-    s->quad.layerFlags =
-        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
-    s->quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    s->quad.subImage.swapchain = s->swapchain;
-    s->quad.subImage.imageRect = {{0, 0}, {HUD_W, HUD_H}};
-    const float width_m = std::clamp(s->config.panel_width_m, 0.05f, 2.0f);
-    s->quad.size = {width_m, width_m * kQuadAspect};
-    if (s->visible && s->anchor_valid) {
-        s->quad.space = s->ref_space;
-        s->quad.pose = s->anchor_pose;
-    } else {
-        // Force-show fallback: head-locked, slightly below center.
-        s->quad.space = s->view_space;
-        s->quad.pose = {{0, 0, 0, 1}, {0.0f, -0.15f, -0.8f}};
-    }
-
-    s->layer_scratch.assign(frame_end_info->layers, frame_end_info->layers + frame_end_info->layerCount);
-    s->layer_scratch.push_back((const XrCompositionLayerBaseHeader*)&s->quad);
-
-    XrFrameEndInfo modified = *frame_end_info;
-    modified.layers = s->layer_scratch.data();
-    modified.layerCount = (uint32_t)s->layer_scratch.size();
-    return s->fns->endFrame(s->session, &modified);
+    s->session_info.publish_timing(s->stats.source, s->config.timing_source, s->stats,
+                                   timing_source_name(s));
+    return result;
 }
 
 } // namespace xrfps

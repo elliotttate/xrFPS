@@ -235,6 +235,7 @@ public sealed partial class MainWindow : Window
         ShowDelaySlider.Value = _config.ShowDelaySec * 100.0;
         HideDelaySlider.Value = _config.HideDelaySec * 100.0;
         F10Check.IsChecked = _config.F10Toggle != 0;
+        TimingSourceCombo.SelectedIndex = Math.Clamp(_config.TimingSource, 0, 3);
 
         PanelWidthSlider.Value = _config.PanelWidthM * 100.0;
         PanelOffsetSlider.Value = _config.PanelOffsetM * 100.0;
@@ -245,10 +246,13 @@ public sealed partial class MainWindow : Window
 
         ShowFps.IsChecked = _config.ShowFps != 0;
         ShowFrametime.IsChecked = _config.ShowFrametime != 0;
+        ShowCpuFrametime.IsChecked = _config.ShowCpuFrametime != 0;
+        ShowGpuFrametime.IsChecked = _config.ShowGpuFrametime != 0;
         ShowTarget.IsChecked = _config.ShowTarget != 0;
         ShowOnTarget.IsChecked = _config.ShowOnTarget != 0;
         ShowPercentiles.IsChecked = _config.ShowPercentiles != 0;
         ShowGraph.IsChecked = _config.ShowGraph != 0;
+        GraphModeCombo.SelectedIndex = Math.Clamp(_config.GraphMode, 0, 3);
         ShowCpuUsage.IsChecked = _config.ShowCpuUsage != 0;
         ShowGpuUsage.IsChecked = _config.ShowGpuUsage != 0;
         ShowGpuAppUsage.IsChecked = _config.ShowGpuAppUsage != 0;
@@ -274,6 +278,7 @@ public sealed partial class MainWindow : Window
         _config.ShowDelaySec = (float)(ShowDelaySlider.Value / 100.0);
         _config.HideDelaySec = (float)(HideDelaySlider.Value / 100.0);
         _config.F10Toggle = F10Check.IsChecked == true ? 1 : 0;
+        _config.TimingSource = TimingSourceCombo.SelectedIndex < 0 ? 0 : TimingSourceCombo.SelectedIndex;
 
         _config.PanelWidthM = (float)(PanelWidthSlider.Value / 100.0);
         _config.PanelOffsetM = (float)(PanelOffsetSlider.Value / 100.0);
@@ -284,10 +289,13 @@ public sealed partial class MainWindow : Window
 
         _config.ShowFps = ShowFps.IsChecked == true ? 1 : 0;
         _config.ShowFrametime = ShowFrametime.IsChecked == true ? 1 : 0;
+        _config.ShowCpuFrametime = ShowCpuFrametime.IsChecked == true ? 1 : 0;
+        _config.ShowGpuFrametime = ShowGpuFrametime.IsChecked == true ? 1 : 0;
         _config.ShowTarget = ShowTarget.IsChecked == true ? 1 : 0;
         _config.ShowOnTarget = ShowOnTarget.IsChecked == true ? 1 : 0;
         _config.ShowPercentiles = ShowPercentiles.IsChecked == true ? 1 : 0;
         _config.ShowGraph = ShowGraph.IsChecked == true ? 1 : 0;
+        _config.GraphMode = GraphModeCombo.SelectedIndex < 0 ? 0 : GraphModeCombo.SelectedIndex;
         _config.ShowCpuUsage = ShowCpuUsage.IsChecked == true ? 1 : 0;
         _config.ShowGpuUsage = ShowGpuUsage.IsChecked == true ? 1 : 0;
         _config.ShowGpuAppUsage = ShowGpuAppUsage.IsChecked == true ? 1 : 0;
@@ -312,6 +320,18 @@ public sealed partial class MainWindow : Window
         PanelRollLabel.Text = $"Roll — {_config.PanelRollDeg:0}°";
         OpacityLabel.Text = $"Opacity — {_config.Opacity * 100:0}%";
         RefreshLabel.Text = $"HUD refresh — {_config.HudRefreshHz:0.0} Hz";
+        ShowConfiguredTimingStatus();
+    }
+
+    private void ShowConfiguredTimingStatus()
+    {
+        TimingSourceStatus.Text = _config.TimingSource switch
+        {
+            1 => "SteamVR compositor timing is forced. OpenXR submission timing is used if SteamVR is unavailable.",
+            2 => "Meta runtime counters are forced. OpenXR submission timing is used if XR_META_performance_metrics is unavailable.",
+            3 => "Portable OpenXR mode measures successful frame submissions and the CPU submission span.",
+            _ => "Auto uses SteamVR compositor timing on SteamVR, Meta metrics on Meta runtimes, then falls back to successful OpenXR submissions."
+        };
     }
 
     // ---- live metrics and preview ----------------------------------
@@ -329,6 +349,21 @@ public sealed partial class MainWindow : Window
         TileTemp.Text = metrics.GpuTempC >= 0 ? $"{metrics.GpuTempC:0}°C" : "--";
         TileApp.Text = metrics.AppPid != 0 ? metrics.AppName : "none detected";
         CollectorStatus.Text = status;
+
+        if (metrics.AppPid != 0 && !string.IsNullOrWhiteSpace(metrics.TimingSourceName))
+        {
+            string values = metrics.AppFps > 0
+                ? $" · {metrics.AppFps:0.0} FPS · {metrics.AppFrameMs:0.00} ms"
+                : string.Empty;
+            string split = metrics.AppCpuFrameMs > 0 || metrics.AppGpuFrameMs > 0
+                ? $" · CPU {(metrics.AppCpuFrameMs > 0 ? $"{metrics.AppCpuFrameMs:0.00} ms" : "—")} · GPU {(metrics.AppGpuFrameMs > 0 ? $"{metrics.AppGpuFrameMs:0.00} ms" : "—")}"
+                : string.Empty;
+            TimingSourceStatus.Text = $"Active: {metrics.TimingSourceName}{values}{split}";
+        }
+        else
+        {
+            ShowConfiguredTimingStatus();
+        }
 
         bool hasNvml = status.Contains("NVML", StringComparison.OrdinalIgnoreCase);
         SetMetricAvailability(ShowVram, hasNvml, "VRAM", "VRAM (unavailable)");

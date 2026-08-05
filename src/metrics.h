@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include "stats.h"
+
 namespace xrfps {
 
 // System metrics the layer cannot gather from inside a game process (GPU
@@ -17,7 +19,7 @@ struct SharedMetrics {
     static constexpr const char* kName = "Local\\xrFPS_Metrics";
 
     uint32_t magic{kMagic};
-    uint32_t version{1};
+    uint32_t version{2};
 
     // Milliseconds since the writer's boot-relative clock; readers compare
     // against their own GetTickCount64() to detect a stopped collector.
@@ -37,6 +39,14 @@ struct SharedMetrics {
     uint32_t app_pid{};
     char app_name[64]{};
 
+    float app_fps{-1.0f};
+    float app_frame_ms{-1.0f};
+    float app_cpu_frame_ms{-1.0f};
+    float app_gpu_frame_ms{-1.0f};
+    int32_t timing_source{};
+    int32_t requested_timing_source{};
+    char timing_source_name[32]{};
+
     bool fresh(uint64_t now_tick, uint64_t max_age_ms = 3000) const {
         return magic == kMagic && updated_tick != 0 && now_tick >= updated_tick &&
                (now_tick - updated_tick) <= max_age_ms;
@@ -50,9 +60,17 @@ struct SharedSession {
     static constexpr const char* kName = "Local\\xrFPS_Session";
 
     uint32_t magic{kMagic};
+    uint32_t version{2};
     uint32_t pid{};
     uint64_t heartbeat_tick{};
     char app_name[64]{};
+    float app_fps{-1.0f};
+    float app_frame_ms{-1.0f};
+    float app_cpu_frame_ms{-1.0f};
+    float app_gpu_frame_ms{-1.0f};
+    int32_t timing_source{};
+    int32_t requested_timing_source{};
+    char timing_source_name[32]{};
 
     bool fresh(uint64_t now_tick, uint64_t max_age_ms = 5000) const {
         return magic == kMagic && pid != 0 && heartbeat_tick != 0 && now_tick >= heartbeat_tick &&
@@ -76,13 +94,31 @@ public:
         }
         view_ = (SharedSession*)MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedSession));
         if (view_ == nullptr) {
+            CloseHandle(mapping_);
+            mapping_ = nullptr;
             return;
         }
         view_->magic = SharedSession::kMagic;
+        view_->version = 2;
         view_->pid = GetCurrentProcessId();
         strncpy_s(view_->app_name, sizeof(view_->app_name), app_name != nullptr ? app_name : "",
                   _TRUNCATE);
         view_->heartbeat_tick = GetTickCount64();
+    }
+
+    void publish_timing(TimingBackend source, int requested_source, const FrameStats& stats,
+                        const char* source_name) {
+        if (view_ == nullptr) {
+            return;
+        }
+        view_->timing_source = (int32_t)source;
+        view_->requested_timing_source = requested_source;
+        view_->app_fps = stats.count > 0 ? stats.fps() : -1.0f;
+        view_->app_frame_ms = stats.count > 0 ? stats.avg() : -1.0f;
+        view_->app_cpu_frame_ms = stats.cpu_avg();
+        view_->app_gpu_frame_ms = stats.gpu_avg();
+        strncpy_s(view_->timing_source_name, sizeof(view_->timing_source_name),
+                  source_name != nullptr ? source_name : "", _TRUNCATE);
     }
 
     // Cheap enough to call every frame; only stores once a second.
@@ -127,6 +163,10 @@ public:
             if (mapping_ != nullptr) {
                 view_ = (const SharedMetrics*)MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0,
                                                             sizeof(SharedMetrics));
+                if (view_ == nullptr) {
+                    CloseHandle(mapping_);
+                    mapping_ = nullptr;
+                }
             }
         }
         if (view_ != nullptr && view_->fresh(GetTickCount64())) {

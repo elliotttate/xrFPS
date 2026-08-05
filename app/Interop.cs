@@ -13,6 +13,7 @@ public struct NativeConfig
     public float ShowDelaySec;
     public float HideDelaySec;
     public int F10Toggle;
+    public int TimingSource;
 
     public float PanelWidthM;
     public float PanelOffsetM;
@@ -22,10 +23,13 @@ public struct NativeConfig
     public float HudRefreshHz;
     public int Theme;
     public int ShowGraph;
+    public int GraphMode;
     public int GraphHeight;
 
     public int ShowFps;
     public int ShowFrametime;
+    public int ShowCpuFrametime;
+    public int ShowGpuFrametime;
     public int ShowTarget;
     public int ShowOnTarget;
     public int ShowPercentiles;
@@ -55,6 +59,14 @@ public struct NativeMetrics
     public uint AppPid;
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
     public string AppName;
+    public float AppFps;
+    public float AppFrameMs;
+    public float AppCpuFrameMs;
+    public float AppGpuFrameMs;
+    public int TimingSource;
+    public int RequestedTimingSource;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+    public string TimingSourceName;
     public int Running;
 }
 
