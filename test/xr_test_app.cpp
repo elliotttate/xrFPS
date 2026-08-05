@@ -4,11 +4,12 @@
 // clears each eye to an animated color in a standard frame loop. An optional
 // sinusoidal CPU sleep gives the frametime graph something to show.
 //
-// Usage: flipfps_testapp [seconds] [--d3d12] [--no-wobble]
+// Usage: flipfps_testapp [seconds] [--d3d12] [--debuglayer] [--no-wobble]
 #include <windows.h>
 
 #include <d3d11.h>
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <dxgi.h>
 #include <wrl/client.h>
 
@@ -55,11 +56,14 @@ int main(int argc, char** argv) {
     int run_seconds = 120;
     bool wobble = true;
     bool use_d3d12 = false;
+    bool debug_layer = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-wobble") == 0) {
             wobble = false;
         } else if (std::strcmp(argv[i], "--d3d12") == 0) {
             use_d3d12 = true;
+        } else if (std::strcmp(argv[i], "--debuglayer") == 0) {
+            debug_layer = true;
         } else {
             run_seconds = std::atoi(argv[i]);
         }
@@ -140,6 +144,13 @@ int main(int argc, char** argv) {
                 break;
             }
             adapter.Reset();
+        }
+        if (debug_layer) {
+            ComPtr<ID3D12Debug> debug;
+            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+                debug->EnableDebugLayer();
+                std::printf("d3d12 debug layer enabled\n");
+            }
         }
         if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)))) {
             std::printf("D3D12CreateDevice failed\n");
@@ -244,6 +255,11 @@ int main(int argc, char** argv) {
     xrEnumerateSwapchainFormats(session, 0, &format_count, nullptr);
     std::vector<int64_t> formats(format_count);
     xrEnumerateSwapchainFormats(session, format_count, &format_count, formats.data());
+    std::printf("swapchain formats offered:");
+    for (const int64_t f : formats) {
+        std::printf(" %lld", (long long)f);
+    }
+    std::printf("\n");
     int64_t color_format = formats.empty() ? 28 : formats[0];
     for (const int64_t f : formats) {
         if (f == 29 || f == 91) { // prefer an SRGB format
@@ -266,7 +282,28 @@ int main(int argc, char** argv) {
         sc.faceCount = 1;
         sc.arraySize = 1;
         sc.mipCount = 1;
-        CHECK_XR(xrCreateSwapchain(session, &sc, &targets[i].swapchain));
+        const XrResult sc_result = xrCreateSwapchain(session, &sc, &targets[i].swapchain);
+        if (XR_FAILED(sc_result)) {
+            std::printf("xrCreateSwapchain view %u failed -> %d\n", i, sc_result);
+            if (use_d3d12 && device12) {
+                std::printf("device removed reason: 0x%08X\n",
+                            (unsigned)device12->GetDeviceRemovedReason());
+                ComPtr<ID3D12InfoQueue> iq;
+                if (SUCCEEDED(device12.As(&iq))) {
+                    const UINT64 count = iq->GetNumStoredMessages();
+                    for (UINT64 m = 0; m < count; ++m) {
+                        SIZE_T len = 0;
+                        iq->GetMessage(m, nullptr, &len);
+                        std::vector<char> buf(len);
+                        auto* msg = (D3D12_MESSAGE*)buf.data();
+                        if (SUCCEEDED(iq->GetMessage(m, msg, &len))) {
+                            std::printf("d3d12[%d]: %s\n", (int)msg->Severity, msg->pDescription);
+                        }
+                    }
+                }
+            }
+            return 1;
+        }
         targets[i].width = sc.width;
         targets[i].height = sc.height;
 
@@ -281,10 +318,15 @@ int main(int argc, char** argv) {
             hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
             hd.NumDescriptors = image_count;
             device12->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&targets[i].rtv_heap12));
+            // Runtimes may allocate swapchain images typeless; the RTV must
+            // name the fully-qualified format.
+            D3D12_RENDER_TARGET_VIEW_DESC rtv_desc{};
+            rtv_desc.Format = (DXGI_FORMAT)color_format;
+            rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
             D3D12_CPU_DESCRIPTOR_HANDLE handle =
                 targets[i].rtv_heap12->GetCPUDescriptorHandleForHeapStart();
             for (uint32_t j = 0; j < image_count; ++j) {
-                device12->CreateRenderTargetView(targets[i].images12[j].texture, nullptr, handle);
+                device12->CreateRenderTargetView(targets[i].images12[j].texture, &rtv_desc, handle);
                 handle.ptr += rtv_stride;
             }
         } else {
@@ -414,7 +456,10 @@ int main(int argc, char** argv) {
                     ID3D11Texture2D* tex = target.images11[image_index].texture;
                     auto& rtv = target.rtvs11[tex];
                     if (!rtv) {
-                        device11->CreateRenderTargetView(tex, nullptr, &rtv);
+                        D3D11_RENDER_TARGET_VIEW_DESC rd{};
+                        rd.Format = (DXGI_FORMAT)color_format;
+                        rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                        device11->CreateRenderTargetView(tex, &rd, &rtv);
                     }
                     context11->ClearRenderTargetView(rtv.Get(), color);
                 }
