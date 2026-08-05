@@ -156,7 +156,7 @@ bool update_content(Session* s) {
     // runtimes block in xrWaitSwapchainImage — repainting per frame adds real
     // latency to the host app. Between refreshes the quad keeps compositing
     // the last released image at zero cost.
-    constexpr double kHudRefreshIntervalMs = 100.0;
+    constexpr double kHudRefreshIntervalMs = 150.0;
     const double now = qpc_ms();
     if (s->ever_uploaded && now - s->last_upload_qpc_ms < kHudRefreshIntervalMs) {
         return true;
@@ -227,6 +227,7 @@ bool update_content(Session* s) {
     s->fns->releaseSwapchainImage(s->swapchain, &release);
     s->ever_uploaded = true;
     s->last_upload_qpc_ms = now;
+    s->skip_next_sample = true;
 
     // Diagnostics: a refresh that visibly stalls the host frame is a bug —
     // report where the time went (throttled to one line per 2 s).
@@ -438,7 +439,11 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
 XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     const double now = qpc_ms();
     if (s->last_end_frame_qpc_ms > 0.0) {
-        s->stats.push((float)(now - s->last_end_frame_qpc_ms));
+        if (s->skip_next_sample) {
+            s->skip_next_sample = false;
+        } else {
+            s->stats.push((float)(now - s->last_end_frame_qpc_ms));
+        }
     }
     s->last_end_frame_qpc_ms = now;
 

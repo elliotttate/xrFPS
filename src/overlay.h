@@ -87,6 +87,9 @@ struct Session {
     FrameStats stats{};
     double last_end_frame_qpc_ms{0.0};
     double last_upload_qpc_ms{0.0};
+    // The frame interval right after a HUD refresh carries the compositor's
+    // cost of handling our swapchain release; keep it out of the stats.
+    bool skip_next_sample{false};
 
     // Recent xrWaitFrame display periods; the HUD target is their max, since
     // some runtimes (VDXR under SSW) alternate half-periods frame to frame.
