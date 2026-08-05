@@ -4,3 +4,7 @@ out/
 .vs/
 .vscode/
 *.user
+
+# .NET build output
+app/bin/
+app/obj/

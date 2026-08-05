@@ -53,8 +53,22 @@ add_executable(flipfps_hudtest src/hud_test.cpp src/hud.cpp src/config.cpp)
 target_include_directories(flipfps_hudtest PRIVATE "${FLIPFPS_OPENXR_INCLUDE}")
 target_compile_definitions(flipfps_hudtest PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# FlipFPS Control Center: install/enable the layer, tune options, preview.
-option(FLIPFPS_BUILD_GUI "Build the Control Center desktop app" ON)
+# Native core shared by the Control Center: the real config, HUD renderer,
+# installer and metrics collector behind a flat C ABI.
+add_library(flipfps_core SHARED
+    src/core_api.cpp
+    src/config.cpp
+    src/hud.cpp
+    gui/installer.cpp
+    gui/metrics_collector.cpp
+)
+target_include_directories(flipfps_core PRIVATE "${FLIPFPS_OPENXR_INCLUDE}")
+target_compile_definitions(flipfps_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+# The app is .NET, which always uses the dynamic CRT.
+set_property(TARGET flipfps_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
+# Legacy ImGui Control Center, kept for a dependency-free fallback build.
+option(FLIPFPS_BUILD_GUI "Build the ImGui Control Center" OFF)
 if(FLIPFPS_BUILD_GUI)
     include(FetchContent)
     FetchContent_Declare(

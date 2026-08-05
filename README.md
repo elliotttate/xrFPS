@@ -31,9 +31,9 @@ minor misses, red for spikes.
 
 ## Install
 
-Run **`flipfps_control.exe`** — the Control Center — and press **Install
-layer**. That copies the layer to `%LOCALAPPDATA%\FlipFPS` and registers it
-per-user (HKCU, no admin). Every OpenXR app started afterwards has it.
+Run the **FlipFPS Control Center** and press **Install layer**. That copies the
+layer to `%LOCALAPPDATA%\FlipFPS` and registers it per-user (HKCU, no admin).
+Every OpenXR app started afterwards has it.
 
 ![Control Center](docs/control-center.png)
 
@@ -55,23 +55,29 @@ plus NVML on NVIDIA cards) and are handed to the layer through shared memory —
 an API layer inside a game process cannot read them on its own. Leave the app
 running to keep those rows updating; everything else works without it.
 
-Scriptable equivalents: `flipfps_control.exe --install`, `--uninstall`,
-`--status`. Disable temporarily for one game with `FLIPFPS_DISABLE=1`, or
-uncheck **Overlay enabled** to switch it off everywhere while leaving the
-layer loaded. The PowerShell scripts under `scripts/` still work if you
-prefer them.
+Disable temporarily for one game with `FLIPFPS_DISABLE=1`, or turn off
+**Overlay enabled** to switch it off everywhere while leaving the layer
+loaded. The PowerShell scripts under `scripts/` still work if you prefer
+them, as does the fallback ImGui app (`-DFLIPFPS_BUILD_GUI=ON`) with
+`--install` / `--uninstall` / `--status` for scripting.
+
+The app is WinUI 3 (.NET 9) and drives `flipfps_core.dll`, which exports the
+layer's own configuration, HUD renderer, installer and metrics collector — so
+the settings, the preview and the headset all run the same code.
 
 ## Build
 
 ```powershell
 cmake -S . -B build -A x64 -DOPENXR_SDK_PATH=<path-to-OpenXR-SDK>  # optional; fetched if omitted
 cmake --build build --config Release
+dotnet build app -c Release -p:Platform=x64        # the Control Center
 ```
 
 Targets:
 
-- `flipfps_control` — the Control Center desktop app (ImGui + D3D11).
 - `XrApiLayer_flipfps` — the layer DLL + manifest.
+- `flipfps_core` — config, HUD renderer, installer and metrics behind a C ABI.
+- `app/` — the WinUI 3 Control Center (needs the .NET 9 SDK).
 - `flipfps_hudtest` — renders the HUD to a BMP for quick visual iteration,
   no headset required.
 - `flipfps_testapp` — a minimal OpenXR app (D3D11 by default, `--d3d12` for
