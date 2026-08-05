@@ -167,6 +167,7 @@ bool update_content(Session* s) {
     }
 
     hud_render(s->pixels.data(), s->stats, s->swapchain_bgra);
+    const double t_rastered = qpc_ms();
 
     uint32_t index = 0;
     XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -180,6 +181,7 @@ bool update_content(Session* s) {
         s->fns->releaseSwapchainImage(s->swapchain, &release);
         return s->ever_uploaded;
     }
+    const double t_waited = qpc_ms();
 
     if (s->gfx == Gfx::D3D11) {
         s->d11_context->UpdateSubresource(s->images_d3d11[index].texture, 0, nullptr, s->pixels.data(),
@@ -225,6 +227,16 @@ bool update_content(Session* s) {
     s->fns->releaseSwapchainImage(s->swapchain, &release);
     s->ever_uploaded = true;
     s->last_upload_qpc_ms = now;
+
+    // Diagnostics: a refresh that visibly stalls the host frame is a bug —
+    // report where the time went (throttled to one line per 2 s).
+    const double total = qpc_ms() - now;
+    static double last_slow_log = 0.0;
+    if (total > 2.0 && now - last_slow_log > 2000.0) {
+        last_slow_log = now;
+        flog("slow hud refresh: %.2f ms (raster %.2f, acquire+wait %.2f, upload+release %.2f)", total,
+             t_rastered - now, t_waited - t_rastered, qpc_ms() - t_waited);
+    }
     return true;
 }
 
@@ -410,15 +422,16 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
         ++s->period_count;
     }
 
-    // The display cannot refresh slower than its true period; shorter values
-    // are half-frame reporting artifacts. Adopt the recent max, with a small
-    // hysteresis so the HUD's colors and graph scale never flicker.
-    float max_ms = 0.0f;
+    // Runtimes mix the true panel period with longer half-rate pacing hints
+    // (SteamVR motion smoothing, VDXR SSW). The panel's real period is the
+    // SHORTEST value reported; adopt the recent min, with hysteresis so the
+    // HUD's colors and graph scale never flicker.
+    float min_ms = 1000.0f;
     for (int i = 0; i < s->period_count; ++i) {
-        max_ms = std::max(max_ms, s->period_window_ms[i]);
+        min_ms = std::min(min_ms, s->period_window_ms[i]);
     }
-    if (s->stats.target_ms <= 0.5f || std::fabs(max_ms - s->stats.target_ms) > s->stats.target_ms * 0.05f) {
-        s->stats.target_ms = max_ms;
+    if (s->stats.target_ms <= 0.5f || std::fabs(min_ms - s->stats.target_ms) > s->stats.target_ms * 0.05f) {
+        s->stats.target_ms = min_ms;
     }
 }
 
