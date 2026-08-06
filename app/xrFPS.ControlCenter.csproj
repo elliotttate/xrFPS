@@ -7,6 +7,10 @@
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Since .NET 8 a RuntimeIdentifier no longer implies a self-contained
+         publish, and Windows does not ship a .NET 9 runtime; without this the
+         release only starts on machines that installed one by hand. -->
+    <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
@@ -20,7 +24,7 @@
     <AssemblyName>xrFPS.ControlCenter</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\xrFPS.ico</ApplicationIcon>
-    <Version>0.4.0</Version>
+    <Version>0.4.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

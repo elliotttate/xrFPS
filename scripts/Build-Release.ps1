@@ -3,8 +3,8 @@
 # in-app updater parses.
 [CmdletBinding()]
 param(
-    [string]$Version = '0.4.1',
-    [string]$FileVersion = '0.4.1.0',
+    [string]$Version = '0.4.2',
+    [string]$FileVersion = '0.4.2.0',
     [string]$OpenXrSdkPath = 'C:\Users\ellio\OneDrive\Documents\GitHub\OpenXR-SDK'
 )
 
@@ -34,7 +34,7 @@ foreach ($target in @($releaseDir, $stageDir)) {
 }
 New-Item -ItemType Directory -Force -Path $releaseDir, $payloadRoot | Out-Null
 
-Write-Host "[1/6] Building native targets"
+Write-Host "[1/7] Building native targets"
 $buildDir = Join-Path $repoRoot 'build'
 $cmakeArgs = @('-S', $repoRoot, '-B', $buildDir, '-A', 'x64')
 if ($OpenXrSdkPath -and (Test-Path -LiteralPath $OpenXrSdkPath)) {
@@ -45,7 +45,7 @@ if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 & cmake --build $buildDir --config Release --target XrApiLayer_xrfps xrfps_core | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 
-Write-Host "[2/6] Publishing the Control Center"
+Write-Host "[2/7] Publishing the Control Center"
 $appPublish = Join-Path $stageDir 'app-publish'
 & dotnet publish (Join-Path $repoRoot 'app') -c Release -p:Platform=x64 `
     -p:Version=$Version -p:AssemblyVersion=$FileVersion -p:FileVersion=$FileVersion `
@@ -60,7 +60,15 @@ if ($stamped -notlike "$Version*") {
     throw "Control Center reports version '$stamped' but this build is '$Version'."
 }
 
-Write-Host "[3/6] Staging the payload"
+# v0.4.1 shipped framework-dependent and would not start without a hand-
+# installed .NET 9 runtime. Refuse to ever produce that build again.
+foreach ($hostFile in @('hostfxr.dll', 'coreclr.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $appPublish $hostFile))) {
+        throw "Publish output lacks $hostFile - the app is not self-contained."
+    }
+}
+
+Write-Host "[3/7] Staging the payload"
 Copy-Item -Path (Join-Path $appPublish '*') -Destination $payloadRoot -Recurse -Force
 foreach ($file in @('XrApiLayer_xrfps.dll', 'xrfps_core.dll')) {
     Copy-Item -LiteralPath (Join-Path $buildDir "Release\$file") -Destination $payloadRoot -Force
@@ -69,26 +77,54 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'manifest\XrApiLayer_xrfps.json') -D
 Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $payloadRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $payloadRoot -Force
 
-Write-Host "[4/6] Compiling the installer"
-$iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-if (-not (Test-Path -LiteralPath $iscc)) {
-    # Fall back to the registered install location before giving up.
-    $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'
-    $location = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation
-    if ($location) { $iscc = Join-Path $location 'ISCC.exe' }
+Write-Host "[4/7] Bundling the VC++ runtime"
+# The self-contained Windows App SDK and xrfps_core.dll (dynamic CRT) both
+# need the VC++ runtime, which a clean Windows install lacks. App-local copies
+# keep the installer and the portable zip free of prerequisites.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe not found: $vswhere" }
+$vsRoot = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if (-not $vsRoot) { throw 'No Visual Studio with the VC++ toolset found.' }
+$crtDir = Get-ChildItem -Path (Join-Path $vsRoot 'VC\Redist\MSVC') -Directory |
+    Where-Object { $_.Name -match '^\d' } |
+    Sort-Object { [version]$_.Name } -Descending |
+    ForEach-Object { Get-ChildItem -Path (Join-Path $_.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
+    Select-Object -First 1
+if (-not $crtDir) { throw "No x64 CRT redist directory found under $vsRoot\VC\Redist\MSVC" }
+Copy-Item -Path (Join-Path $crtDir.FullName '*.dll') -Destination $payloadRoot -Force
+foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $dll))) {
+        throw "VC++ runtime staging missed $dll."
+    }
 }
-if (-not (Test-Path -LiteralPath $iscc)) { throw "Inno Setup 6 compiler not found: $iscc" }
+
+Write-Host "[5/7] Compiling the installer"
+# Inno Setup installs per-machine or per-user; check both, then the registry.
+$isccCandidates = @(
+    'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+    (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')
+)
+foreach ($key in @('HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+                   'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1')) {
+    $entry = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+    # StrictMode: the property may be absent even when the key exists.
+    if ($entry -and $entry.PSObject.Properties['InstallLocation'] -and $entry.InstallLocation) {
+        $isccCandidates += (Join-Path $entry.InstallLocation 'ISCC.exe')
+    }
+}
+$iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $iscc) { throw 'Inno Setup 6 compiler not found; install Inno Setup 6 (a per-user install works) and re-run.' }
 
 & $iscc '/Qp' "/DMyAppVersion=$Version" "/DMyFileVersion=$FileVersion" `
     "/DPayloadRoot=$payloadRoot" "/DOutputDirectory=$releaseDir" `
     (Join-Path $repoRoot 'installer\xrFPS.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
 
-Write-Host "[5/6] Packing the portable zip"
+Write-Host "[6/7] Packing the portable zip"
 $zip = Join-Path $releaseDir "xrFPS-$Version-Portable.zip"
 Compress-Archive -Path $payloadRoot -DestinationPath $zip -CompressionLevel Optimal -Force
 
-Write-Host "[6/6] Writing checksums"
+Write-Host "[7/7] Writing checksums"
 # "<hash> *<name>", the format AppUpdateService parses to verify a download.
 $checksumPath = Join-Path $releaseDir 'SHA256SUMS.txt'
 $lines = Get-ChildItem -LiteralPath $releaseDir -File |

@@ -18,6 +18,11 @@ public static class Program
     [DllImport("kernel32.dll")]
     private static extern bool AllocConsole();
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hwnd, string text, string caption, uint type);
+
+    private static int _fatalReported;
+
     [STAThread]
     public static int Main(string[] args)
     {
@@ -34,16 +39,71 @@ public static class Program
             }
         }
 
-        // Normal UI launch.
-        global::WinRT.ComWrappersSupport.InitializeComWrappers();
-        Application.Start(delegate
+        // A WinExe that dies during startup shows nothing at all — the click
+        // just doesn't "work". Every failure path must end in ReportFatal so
+        // the user gets a dialog and a log they can attach to a bug report.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
-            var context = new DispatcherQueueSynchronizationContext(
-                DispatcherQueue.GetForCurrentThread());
-            SynchronizationContext.SetSynchronizationContext(context);
-            _ = new App();
-        });
+            if (e.ExceptionObject is Exception ex)
+            {
+                ReportFatal(ex);
+            }
+        };
+
+        try
+        {
+            // Normal UI launch.
+            global::WinRT.ComWrappersSupport.InitializeComWrappers();
+            Application.Start(delegate
+            {
+                var context = new DispatcherQueueSynchronizationContext(
+                    DispatcherQueue.GetForCurrentThread());
+                SynchronizationContext.SetSynchronizationContext(context);
+                _ = new App();
+            });
+        }
+        catch (Exception ex)
+        {
+            ReportFatal(ex);
+            return 1;
+        }
         return 0;
+    }
+
+    /// <summary>
+    /// Last-resort reporting for a UI that never came up (or died). XAML may
+    /// be unusable at this point, so only Win32 is safe to touch.
+    /// </summary>
+    internal static void ReportFatal(Exception ex)
+    {
+        // XAML swallows some exceptions and rethrows others across the COM
+        // boundary, so more than one hook can observe the same failure.
+        if (Interlocked.Exchange(ref _fatalReported, 1) != 0)
+        {
+            return;
+        }
+
+        string logPath = "";
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "xrFPS");
+            Directory.CreateDirectory(dir);
+            logPath = Path.Combine(dir, "startup-crash.log");
+            File.AppendAllText(logPath,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {Environment.ProcessPath}{Environment.NewLine}" +
+                $"{ex}{Environment.NewLine}{Environment.NewLine}");
+        }
+        catch
+        {
+            // A read-only profile still gets the dialog below.
+        }
+
+        const uint MB_ICONERROR = 0x10, MB_TOPMOST = 0x40000;
+        MessageBoxW(IntPtr.Zero,
+            $"xrFPS Control Center could not start.\n\n{ex.GetType().Name}: {ex.Message}" +
+            (logPath.Length > 0 ? $"\n\nDetails were written to:\n{logPath}" : ""),
+            "xrFPS Control Center", MB_ICONERROR | MB_TOPMOST);
     }
 
     private static int RunVerb(bool install)
