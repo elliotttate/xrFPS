@@ -2,7 +2,8 @@
 <Application
     x:Class="xrFPS.ControlCenter.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -10,7 +11,12 @@
             </ResourceDictionary.MergedDictionaries>
 
             <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Dark">
+                <!-- x:Key="Default", not "Dark": theme lookup falls back to
+                     "Default" but never across to a sibling theme, so on a
+                     light-mode machine a "Dark"-only table makes every
+                     ThemeResource lookup fail — a startup XamlParseException
+                     for most of the world, since Windows ships light. -->
+                <ResourceDictionary x:Key="Default">
                     <!-- Keep native controls in the same green family as the app. -->
                     <Color x:Key="SystemAccentColor">#FF56CF85</Color>
                     <Color x:Key="SystemAccentColorLight1">#FF6DDB97</Color>
