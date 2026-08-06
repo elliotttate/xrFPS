@@ -47,9 +47,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 
 Write-Host "[2/7] Publishing the Control Center"
 $appPublish = Join-Path $stageDir 'app-publish'
+# The runtime packs for a self-contained publish restore from nuget.org; a
+# machine with no configured NuGet sources fails with NU1101 without this.
 & dotnet publish (Join-Path $repoRoot 'app') -c Release -p:Platform=x64 `
     -p:Version=$Version -p:AssemblyVersion=$FileVersion -p:FileVersion=$FileVersion `
-    -p:InformationalVersion=$Version -o $appPublish | Out-Null
+    -p:InformationalVersion=$Version -o $appPublish `
+    --source https://api.nuget.org/v3/index.json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Control Center publish failed.' }
 
 # The app compares its own version against GitHub releases, so a mis-stamped
