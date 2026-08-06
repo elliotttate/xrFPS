@@ -71,9 +71,28 @@ const Theme kThemes[] = {
      {128, 156, 255, 255}, {29, 61, 78, 210}},
 };
 
+// Only three (size, style) pairs are ever drawn, so they are built once rather
+// than per string. Constructing a FontFamily/Font per call cost more than the
+// drawing itself, and this rasterizer runs on the host app's render thread.
+constexpr int kFontSlots = 3;
+
+int font_slot(int scale) {
+    if (scale >= 4) {
+        return 2;
+    }
+    return scale >= 2 ? 1 : 0;
+}
+
 struct GdiState {
     ULONG_PTR token{};
     const wchar_t* family{L"Segoe UI"};
+    // Deliberately leaked: GDI+ objects must not be destroyed after the library
+    // itself has been torn down, and static destruction order at process exit
+    // gives no such guarantee.
+    Gdiplus::FontFamily* font_family{};
+    Gdiplus::Font* fonts[kFontSlots]{};
+    Gdiplus::StringFormat* format{};
+    Gdiplus::SolidBrush* brush{};
 };
 
 GdiState& gdi_state() {
@@ -89,6 +108,29 @@ GdiState& gdi_state() {
         if (variable.GetLastStatus() == Gdiplus::Ok) {
             state.family = L"Segoe UI Variable Display";
         }
+
+        state.font_family = new Gdiplus::FontFamily(state.family);
+        if (state.font_family->GetLastStatus() != Gdiplus::Ok) {
+            delete state.font_family;
+            state.font_family = nullptr;
+            state.token = 0; // fall back to the built-in bitmap font
+            return;
+        }
+        const struct {
+            Gdiplus::REAL px;
+            Gdiplus::FontStyle style;
+        } kSpecs[kFontSlots] = {{10.0f, Gdiplus::FontStyleRegular},
+                                {15.0f, Gdiplus::FontStyleBold},
+                                {34.0f, Gdiplus::FontStyleBold}};
+        for (int i = 0; i < kFontSlots; ++i) {
+            state.fonts[i] = new Gdiplus::Font(state.font_family, kSpecs[i].px, kSpecs[i].style,
+                                               Gdiplus::UnitPixel);
+        }
+        state.format = new Gdiplus::StringFormat(Gdiplus::StringFormat::GenericTypographic());
+        state.format->SetFormatFlags(state.format->GetFormatFlags() |
+                                     Gdiplus::StringFormatFlagsNoWrap |
+                                     Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
+        state.brush = new Gdiplus::SolidBrush(Gdiplus::Color(255, 255, 255, 255));
     });
     return state;
 }
@@ -185,53 +227,70 @@ struct Canvas {
         }
     }
 
-    static bool inside_round(int x, int y, int x0, int y0, int w, int h, int radius) {
-        if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) {
+    // Horizontal extent [begin, end) of a rounded rectangle on row y. This is
+    // the exact per-pixel predicate solved for x, so one sqrt per row replaces
+    // a test per pixel across the whole panel.
+    static bool round_span(int y, int x0, int y0, int w, int h, int radius, int* begin, int* end) {
+        if (y < y0 || y >= y0 + h) {
             return false;
         }
-        if (x >= x0 + radius && x < x0 + w - radius) {
-            return true;
-        }
         if (y >= y0 + radius && y < y0 + h - radius) {
+            *begin = x0;
+            *end = x0 + w;
             return true;
         }
-        const int cx = x < x0 + radius ? x0 + radius : x0 + w - radius - 1;
+        // Corner rows: the straight middle columns are always inside, and each
+        // side extends by the circle's half-chord at this row.
         const int cy = y < y0 + radius ? y0 + radius : y0 + h - radius - 1;
-        const int dx = x - cx;
         const int dy = y - cy;
-        return dx * dx + dy * dy <= radius * radius;
+        const int chord = radius * radius - dy * dy;
+        const int k = chord > 0 ? (int)std::sqrt((double)chord) : 0;
+        *begin = x0 + radius - k;
+        *end = x0 + w - radius + k;
+        return *begin < *end;
+    }
+
+    void fill_span(int y, int xb, int xe, Color c) {
+        if (y < 0 || y >= HUD_H) {
+            return;
+        }
+        xb = std::max(xb, 0);
+        xe = std::min(xe, HUD_W);
+        if (xb >= xe) {
+            return;
+        }
+        const uint8_t first = bgra ? c.b : c.r;
+        const uint8_t third = bgra ? c.r : c.b;
+        const uint8_t a = (uint8_t)std::clamp((float)c.a * alpha, 0.0f, 255.0f);
+        uint8_t* p = px + ((size_t)y * HUD_W + xb) * 4;
+        for (int x = xb; x < xe; ++x, p += 4) {
+            p[0] = first;
+            p[1] = c.g;
+            p[2] = third;
+            p[3] = a;
+        }
     }
 
     void rounded_fill(int x0, int y0, int w, int h, int radius, Color c) {
+        int xb = 0;
+        int xe = 0;
         for (int y = y0; y < y0 + h; ++y) {
-            for (int x = x0; x < x0 + w; ++x) {
-                if (inside_round(x, y, x0, y0, w, h, radius)) {
-                    put(x, y, c);
-                }
+            if (round_span(y, x0, y0, w, h, radius, &xb, &xe)) {
+                fill_span(y, xb, xe, c);
             }
         }
     }
 
     void rounded_gradient(int x0, int y0, int w, int h, int radius, Color top, Color bottom) {
+        int xb = 0;
+        int xe = 0;
         for (int y = y0; y < y0 + h; ++y) {
-            const float t = h > 1 ? (float)(y - y0) / (float)(h - 1) : 0.0f;
-            const Color row = mix(top, bottom, t);
-            for (int x = x0; x < x0 + w; ++x) {
-                if (inside_round(x, y, x0, y0, w, h, radius)) {
-                    put(x, y, row);
-                }
+            if (!round_span(y, x0, y0, w, h, radius, &xb, &xe)) {
+                continue;
             }
+            const float t = h > 1 ? (float)(y - y0) / (float)(h - 1) : 0.0f;
+            fill_span(y, xb, xe, mix(top, bottom, t));
         }
-    }
-
-    static int font_px(int scale) {
-        if (scale >= 4) {
-            return 34;
-        }
-        if (scale >= 2) {
-            return 15;
-        }
-        return 10;
     }
 
     static int glyph_span(unsigned ch, int* first_col = nullptr) {
@@ -291,37 +350,26 @@ struct Canvas {
             fallback_text(x, y, scale, value, c);
             return;
         }
+        const GdiState& gdi = gdi_state();
         const std::wstring wide = widen(value);
-        Gdiplus::FontFamily family(gdi_state().family);
-        const int style = scale >= 2 ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
-        Gdiplus::Font font(&family, (Gdiplus::REAL)font_px(scale), style, Gdiplus::UnitPixel);
         const BYTE red = bgra ? c.r : c.b;
         const BYTE blue = bgra ? c.b : c.r;
-        Gdiplus::SolidBrush brush(Gdiplus::Color(
+        gdi.brush->SetColor(Gdiplus::Color(
             (BYTE)std::clamp((float)c.a * alpha, 0.0f, 255.0f), red, c.g, blue));
-        Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
-        format.SetFormatFlags(format.GetFormatFlags() |
-                              Gdiplus::StringFormatFlagsNoWrap |
-                              Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
-        graphics->DrawString(wide.c_str(), -1, &font,
+        graphics->DrawString(wide.c_str(), -1, gdi.fonts[font_slot(scale)],
                              Gdiplus::PointF((Gdiplus::REAL)x, (Gdiplus::REAL)y),
-                             &format, &brush);
+                             gdi.format, gdi.brush);
     }
 
     int text_w(const char* value, int scale) {
         if (graphics == nullptr) {
             return fallback_text_w(value, scale);
         }
+        const GdiState& gdi = gdi_state();
         const std::wstring wide = widen(value);
-        Gdiplus::FontFamily family(gdi_state().family);
-        const int style = scale >= 2 ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
-        Gdiplus::Font font(&family, (Gdiplus::REAL)font_px(scale), style, Gdiplus::UnitPixel);
-        Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
-        format.SetFormatFlags(format.GetFormatFlags() |
-                              Gdiplus::StringFormatFlagsNoWrap |
-                              Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
         Gdiplus::RectF bounds;
-        graphics->MeasureString(wide.c_str(), -1, &font, Gdiplus::PointF(0, 0), &format, &bounds);
+        graphics->MeasureString(wide.c_str(), -1, gdi.fonts[font_slot(scale)],
+                                Gdiplus::PointF(0, 0), gdi.format, &bounds);
         return (int)std::ceil(bounds.Width);
     }
 };
@@ -422,16 +470,13 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
         snprintf(buf, sizeof(buf), "Target %.1f", target);
         rows.add(buf, th.dim);
     }
-    if (config.show_on_target && stats.count > 0) {
-        int on_target = 0;
-        for (int i = 0; i < stats.count; ++i) {
-            if (stats.sample(i) <= target * 1.06f) {
-                ++on_target;
-            }
+    if (config.show_on_target) {
+        const float on_target = stats.on_target_pct(target * 1.06f);
+        if (on_target >= 0.0f) {
+            const int pct = (int)(on_target + 0.5f);
+            snprintf(buf, sizeof(buf), "%d%% on target", pct);
+            rows.add(buf, pct >= 95 ? th.good : (pct >= 70 ? th.warn : th.bad));
         }
-        const int pct = (int)(100.0f * (float)on_target / (float)stats.count + 0.5f);
-        snprintf(buf, sizeof(buf), "%d%% on target", pct);
-        rows.add(buf, pct >= 95 ? th.good : (pct >= 70 ? th.warn : th.bad));
     }
     if (config.show_percentiles && stats.count > 8) {
         snprintf(buf, sizeof(buf), "1%% low %.0f", stats.percentile_fps(0.99f));
@@ -498,6 +543,12 @@ void hud_render(uint8_t* out, const FrameStats& stats, const Config& config,
     const bool separate_graphs = config.graph_mode == 3;
     constexpr int min_graph_h = 24;
     if (max_graph_h < min_graph_h) {
+        // Dropping the graph without a word reads as a bug. Say what took the
+        // space, so the fix (turn off a row) is obvious.
+        if (HUD_H - gy >= 12) {
+            cv.text(16, std::min(gy, HUD_H - 13), 1, "Graph hidden - too many rows enabled",
+                    th.dim);
+        }
         return;
     }
     const int gh = std::clamp(config.graph_height, min_graph_h, max_graph_h);

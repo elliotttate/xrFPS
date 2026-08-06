@@ -39,7 +39,7 @@ public sealed partial class MainWindow : Window
     private static readonly (string Eyebrow, string Title, string Subtitle)[] PageInfo =
     {
         ("OVERLAY", "Dashboard", "Flip a controller upside down to see your frame rate in any OpenXR game."),
-        ("OVERLAY", "Gesture", "Choose which controller summons the HUD and how deliberate the flip must be."),
+        ("OVERLAY", "Gesture", "Choose the flip gesture, floating position, and automatic no-controller fallback."),
         ("OVERLAY", "Placement & look", "Control where the HUD sits and how it appears in the headset."),
         ("OVERLAY", "Readouts", "Choose the frame statistics and system metrics shown on the HUD."),
         ("SETUP", "Installation", "Install, repair, or remove the per-user OpenXR API layer."),
@@ -236,6 +236,8 @@ public sealed partial class MainWindow : Window
         HideDelaySlider.Value = _config.HideDelaySec * 100.0;
         F10Check.IsChecked = _config.F10Toggle != 0;
         TimingSourceCombo.SelectedIndex = Math.Clamp(_config.TimingSource, 0, 3);
+        ControllerPlacementCombo.SelectedIndex = Math.Clamp(_config.ControllerPlacement, 0, 10);
+        FallbackPlacementCombo.SelectedIndex = Math.Clamp(_config.FallbackPlacement, 0, 7);
 
         PanelWidthSlider.Value = _config.PanelWidthM * 100.0;
         PanelOffsetSlider.Value = _config.PanelOffsetM * 100.0;
@@ -279,6 +281,12 @@ public sealed partial class MainWindow : Window
         _config.HideDelaySec = (float)(HideDelaySlider.Value / 100.0);
         _config.F10Toggle = F10Check.IsChecked == true ? 1 : 0;
         _config.TimingSource = TimingSourceCombo.SelectedIndex < 0 ? 0 : TimingSourceCombo.SelectedIndex;
+        _config.ControllerPlacement = ControllerPlacementCombo.SelectedIndex < 0
+            ? 0
+            : ControllerPlacementCombo.SelectedIndex;
+        _config.FallbackPlacement = FallbackPlacementCombo.SelectedIndex < 0
+            ? 0
+            : FallbackPlacementCombo.SelectedIndex;
 
         _config.PanelWidthM = (float)(PanelWidthSlider.Value / 100.0);
         _config.PanelOffsetM = (float)(PanelOffsetSlider.Value / 100.0);
@@ -316,7 +324,7 @@ public sealed partial class MainWindow : Window
         ShowDelayLabel.Text = $"Show delay — {_config.ShowDelaySec:0.00} s";
         HideDelayLabel.Text = $"Hide delay — {_config.HideDelaySec:0.00} s";
         PanelWidthLabel.Text = $"Panel width — {_config.PanelWidthM * 100:0} cm";
-        PanelOffsetLabel.Text = $"Distance from controller — {_config.PanelOffsetM * 100:0} cm";
+        PanelOffsetLabel.Text = $"Adaptive underside distance — {_config.PanelOffsetM * 100:0} cm";
         PanelRollLabel.Text = $"Roll — {_config.PanelRollDeg:0}°";
         OpacityLabel.Text = $"Opacity — {_config.Opacity * 100:0}%";
         RefreshLabel.Text = $"HUD refresh — {_config.HudRefreshHz:0.0} Hz";

@@ -294,8 +294,8 @@
                                 <StackPanel Spacing="18">
                                     <ComboBox
                                         x:Name="HandCombo"
-                                        Header="Which controller"
-                                        AutomationProperties.Name="Which controller"
+                                        Header="Controller used for the flip gesture"
+                                        AutomationProperties.Name="Controller used for the flip gesture"
                                         MaxWidth="360"
                                         HorizontalAlignment="Stretch"
                                         SelectionChanged="Setting_Changed">
@@ -303,6 +303,11 @@
                                         <ComboBoxItem Content="Left only" />
                                         <ComboBoxItem Content="Right only" />
                                     </ComboBox>
+                                    <TextBlock
+                                        Style="{StaticResource MutedTextStyle}"
+                                        FontSize="12"
+                                        TextWrapping="Wrap"
+                                        Text="Named left/right placements always use that hand. Controller-attached positions use the flip gesture; Head locked and Follow positions stay visible." />
 
                                     <StackPanel Spacing="4">
                                         <TextBlock x:Name="FlipAngleLabel" Text="Flip angle" Style="{StaticResource SettingLabelStyle}" />
@@ -345,10 +350,74 @@
                                             ValueChanged="Setting_Changed" />
                                     </StackPanel>
 
-                                    <CheckBox
-                                        x:Name="F10Check"
-                                        Content="F10 toggles a head-locked HUD"
-                                        Click="Setting_Changed" />
+                                    <StackPanel Spacing="4">
+                                        <CheckBox
+                                            x:Name="F10Check"
+                                            Content="F10 forces the HUD visible"
+                                            Click="Setting_Changed" />
+                                        <TextBlock
+                                            Style="{StaticResource MutedTextStyle}"
+                                            FontSize="12"
+                                            TextWrapping="Wrap"
+                                            Text="Only while the game has focus. Useful for apps that never bind controllers. Off by default because many games and desktop tools already use F10." />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel Spacing="16">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Floating position" Style="{StaticResource CardTitleStyle}" />
+                                        <TextBlock
+                                            Style="{StaticResource MutedTextStyle}"
+                                            FontSize="12"
+                                            TextWrapping="Wrap"
+                                            Text="Choose one position while the selected controller is tracked and a separate fallback for when it is disconnected or loses tracking. Switching is automatic." />
+                                    </StackPanel>
+
+                                    <ComboBox
+                                        x:Name="ControllerPlacementCombo"
+                                        Header="Controller available"
+                                        AutomationProperties.Name="Floating position when controller is available"
+                                        MaxWidth="520"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="Setting_Changed">
+                                        <ComboBoxItem Content="Adaptive controller underside (xrFPS)" />
+                                        <ComboBoxItem Content="Bottom of left controller" />
+                                        <ComboBoxItem Content="Bottom of left controller — steep" />
+                                        <ComboBoxItem Content="Left wrist" />
+                                        <ComboBoxItem Content="Under left controller" />
+                                        <ComboBoxItem Content="Bottom of right controller" />
+                                        <ComboBoxItem Content="Bottom of right controller — steep" />
+                                        <ComboBoxItem Content="Right wrist" />
+                                        <ComboBoxItem Content="Under right controller" />
+                                        <ComboBoxItem Content="Head locked" />
+                                        <ComboBoxItem Content="Follow below headset" />
+                                    </ComboBox>
+
+                                    <ComboBox
+                                        x:Name="FallbackPlacementCombo"
+                                        Header="Controller unavailable"
+                                        AutomationProperties.Name="Fallback floating position when controller is unavailable"
+                                        MaxWidth="520"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="Setting_Changed">
+                                        <ComboBoxItem Content="Follow below headset" />
+                                        <ComboBoxItem Content="Follow left of headset" />
+                                        <ComboBoxItem Content="Follow right of headset" />
+                                        <ComboBoxItem Content="Head locked" />
+                                        <ComboBoxItem Content="Fixed below play-space origin" />
+                                        <ComboBoxItem Content="Fixed left of play-space origin" />
+                                        <ComboBoxItem Content="Fixed right of play-space origin" />
+                                        <ComboBoxItem Content="Hidden" />
+                                    </ComboBox>
+
+                                    <InfoBar
+                                        IsOpen="True"
+                                        IsClosable="False"
+                                        Severity="Informational"
+                                        Title="How the positions move"
+                                        Message="Follow positions stay visible and softly catch up to your headset. Head locked stays in view. Fixed positions remain in the OpenXR LOCAL play space." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -378,14 +447,14 @@
                                                 ValueChanged="Setting_Changed" />
                                         </StackPanel>
                                         <StackPanel Spacing="4">
-                                            <TextBlock x:Name="PanelOffsetLabel" Text="Distance from controller" Style="{StaticResource SettingLabelStyle}" />
+                                            <TextBlock x:Name="PanelOffsetLabel" Text="Adaptive underside distance" Style="{StaticResource SettingLabelStyle}" />
                                             <Slider
                                                 x:Name="PanelOffsetSlider"
                                                 Minimum="0"
                                                 Maximum="40"
                                                 MaxWidth="560"
                                                 HorizontalAlignment="Stretch"
-                                                AutomationProperties.Name="Distance from controller in centimeters"
+                                                AutomationProperties.Name="Adaptive underside distance in centimeters"
                                                 ValueChanged="Setting_Changed" />
                                         </StackPanel>
                                         <StackPanel Spacing="4">

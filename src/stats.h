@@ -109,6 +109,24 @@ struct FrameStats {
 
     float cpu_avg() const { return auxiliary_avg(true); }
     float gpu_avg() const { return auxiliary_avg(false); }
+
+    // Share of frames that met the target, over the same one-second window as
+    // fps() and avg() -- reading it against the full retained history would put
+    // two different time bases on adjacent lines of the HUD. Negative when
+    // there is nothing to report yet.
+    float on_target_pct(float threshold_ms) const {
+        const int samples = rate_sample_count();
+        if (samples == 0) {
+            return -1.0f;
+        }
+        int met = 0;
+        for (int i = count - samples; i < count; ++i) {
+            if (sample(i) <= threshold_ms) {
+                ++met;
+            }
+        }
+        return 100.0f * (float)met / (float)samples;
+    }
     bool has_cpu() const { return cpu_avg() > 0.0f; }
     bool has_gpu() const { return gpu_avg() > 0.0f; }
 
@@ -118,22 +136,16 @@ struct FrameStats {
         if (count == 0) {
             return 0.0f;
         }
-        float sorted[N];
+        float scratch[N];
         for (int i = 0; i < count; ++i) {
-            sorted[i] = sample(i);
-        }
-        for (int i = 1; i < count; ++i) {
-            const float key = sorted[i];
-            int j = i - 1;
-            while (j >= 0 && sorted[j] > key) {
-                sorted[j + 1] = sorted[j];
-                --j;
-            }
-            sorted[j + 1] = key;
+            scratch[i] = sample(i);
         }
         int idx = (int)(p * (float)(count - 1) + 0.5f);
         idx = std::clamp(idx, 0, count - 1);
-        return sorted[idx];
+        // Only the one ranked element is needed; a full sort of 512 unordered
+        // frametimes runs on the host app's render thread.
+        std::nth_element(scratch, scratch + idx, scratch + count);
+        return scratch[idx];
     }
 
     float percentile_fps(float p) const {

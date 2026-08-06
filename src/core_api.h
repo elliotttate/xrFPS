@@ -25,6 +25,8 @@ typedef struct XrFpsConfigAbi {
     int32_t f10_toggle;
     int32_t timing_source;
 
+    int32_t controller_placement;
+    int32_t fallback_placement;
     float panel_width_m;
     float panel_offset_m;
     float panel_roll_deg;

@@ -72,6 +72,8 @@ bool Config::load(const std::string& file) {
         else if (key == "hide_delay_sec") { hide_delay_sec = as_float(); }
         else if (key == "f10_toggle") { f10_toggle = as_bool(); }
         else if (key == "timing_source") { timing_source = as_int(); }
+        else if (key == "controller_placement") { controller_placement = as_int(); }
+        else if (key == "fallback_placement") { fallback_placement = as_int(); }
         else if (key == "panel_width_m") { panel_width_m = as_float(); }
         else if (key == "panel_offset_m") { panel_offset_m = as_float(); }
         else if (key == "panel_roll_deg") { panel_roll_deg = as_float(); }
@@ -119,7 +121,9 @@ bool Config::save(const std::string& file) const {
     fprintf(f, "hide_delay_sec = %.2f\n", hide_delay_sec);
     fprintf(f, "f10_toggle = %d\n", f10_toggle ? 1 : 0);
     fprintf(f, "timing_source = %d\n", timing_source);
-    fprintf(f, "\npanel_width_m = %.3f\n", panel_width_m);
+    fprintf(f, "\ncontroller_placement = %d\n", controller_placement);
+    fprintf(f, "fallback_placement = %d\n", fallback_placement);
+    fprintf(f, "panel_width_m = %.3f\n", panel_width_m);
     fprintf(f, "panel_offset_m = %.3f\n", panel_offset_m);
     fprintf(f, "panel_roll_deg = %.1f\n", panel_roll_deg);
     fprintf(f, "\nopacity = %.2f\n", opacity);

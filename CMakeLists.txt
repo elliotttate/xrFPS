@@ -87,6 +87,9 @@ if(BUILD_TESTING)
         COMMAND xrfps_hudtest --separate "${CMAKE_CURRENT_BINARY_DIR}/hudtest-separate.bmp")
     add_executable(xrfps_stats_test test/stats_test.cpp)
     add_test(NAME xrfps_stats COMMAND xrfps_stats_test)
+    add_executable(xrfps_config_test test/config_test.cpp src/config.cpp)
+    target_compile_definitions(xrfps_config_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_test(NAME xrfps_config COMMAND xrfps_config_test)
     foreach(XRFPS_THEME RANGE 1 5)
         add_test(NAME xrfps_hud_theme_${XRFPS_THEME}
             COMMAND xrfps_hudtest --theme ${XRFPS_THEME}

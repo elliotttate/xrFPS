@@ -7,7 +7,8 @@ composited over **any OpenXR application**. Flip it back — it disappears.
 
 xrFPS is an **implicit OpenXR API layer**: it loads into every OpenXR app on
 your machine automatically (no injection, no per-game setup, no dependency on
-any specific engine or runtime) and draws nothing until you flip a controller.
+any specific engine or runtime). With a tracked controller it stays out of the
+way until you flip; without one it uses your chosen floating fallback position.
 
 ## How it works
 
@@ -21,10 +22,22 @@ any specific engine or runtime) and draws nothing until you flip a controller.
   gives it controller poses without touching the app's input.
 - When a grip's up-vector points down (past ~120°) for a quarter second, the
   layer renders the HUD with a tiny built-in CPU rasterizer, uploads it to a
-  runtime swapchain, and appends one `XrCompositionLayerQuad` floating above
-  the flipped controller, billboarded toward your head. Flipping back hides it.
-- `F10` toggles a head-locked fallback HUD (useful for apps that never attach
-  action sets, or when you don't have controllers handy).
+  runtime swapchain, and appends one `XrCompositionLayerQuad` at the selected
+  controller, wrist, headset, follow, or play-space position. Flipping back
+  hides controller-mode positions.
+- Separate **controller available** and **controller unavailable** placement
+  profiles switch automatically when the selected hand disconnects or loses
+  tracking. The fallback can softly follow below/left/right of the headset,
+  stay head locked, remain fixed in LOCAL play space, or hide completely.
+  Head-locked and follow controller-on positions stay visible; positions
+  attached to a controller or wrist retain the flip-to-show gesture.
+  The fallback defaults to **hidden**, which keeps xrFPS flip-to-summon; pick
+  another profile to get an always-on readout.
+- `F10` forces the HUD visible (useful for apps that never attach action sets,
+  or when you don't have controllers handy). It keeps whatever placement is
+  active, falling back to head locked only when nothing else resolves. Disabled
+  by default, and only ever read while the game holds focus, since F10 is a
+  common binding elsewhere.
 
 The HUD shows current FPS (color-coded against the runtime's refresh target),
 average frametime in milliseconds, the target frametime, and either a scrolling
@@ -52,8 +65,9 @@ The same window is where you tune everything, and **settings apply live** —
 the layer re-reads them about once a second, so a game already running picks
 up changes without restarting:
 
-- **Gesture** — which controller, how far it must rotate, show/hide delays.
-- **Placement & look** — panel size, distance off the controller, roll,
+- **Gesture** — which controller, how far it must rotate, show/hide delays,
+  the controller-on floating position, and the automatic controller-off fallback.
+- **Placement & look** — panel size, adaptive underside distance, roll,
   opacity, one of six HUD themes, and how often the HUD repaints.
 - **Readouts** — choose Auto, SteamVR, Meta, or OpenXR frame timing; select an
   automatic, application, combined CPU/GPU, or separate CPU and GPU graph; and choose the HUD rows: FPS,
@@ -136,10 +150,19 @@ Notes and limits:
   timestamps. Its CPU value is explicitly the `xrBeginFrame`-to-`xrEndFrame`
   submission span.
 - FPS uses approximately one second of elapsed time at every refresh rate and
-  counts only successful submissions. HUD upload time is intentionally retained
-  in fallback timing, so the overlay cannot hide a hitch it introduced.
+  counts only successful submissions.
+- The frame that repaints the HUD is excluded from the statistics. That
+  interval contains xrFPS's own raster, swapchain acquire/wait/upload and
+  release, so counting it would bill the tool's cost to the application as a
+  periodic spike at exactly the HUD refresh rate — visible mostly in 1% low
+  and ON TGT. xrFPS still holds itself accountable: a refresh that overruns is
+  logged as `slow hud refresh` with its raster/acquire/upload breakdown.
 - ON TGT shows what fraction of recent frames hit the target period —
-  the fastest way to see "peak rate" vs "actually delivered rate" apart.
+  the fastest way to see "peak rate" vs "actually delivered rate" apart. It
+  reads the same one-second window as the FPS and frametime rows.
+- The target period is taken from the short end of a 90-sample window of
+  `predictedDisplayPeriod`, not its average or maximum: runtimes interleave the
+  true panel period with longer half-rate pacing hints under motion smoothing.
 - Apps that never attach action sets get no flip gesture (nothing to bind
   against); use `F10` there.
 - One quad is appended only when the app is under the runtime's

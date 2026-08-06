@@ -89,6 +89,7 @@ struct Session {
     int64_t swapchain_format{0};
     bool swapchain_bgra{false};
     bool ever_uploaded{false};
+    int swapchain_attempts{0};
     std::vector<XrSwapchainImageD3D11KHR> images_d3d11{};
     std::vector<XrSwapchainImageD3D12KHR> images_d3d12{};
 
@@ -96,6 +97,11 @@ struct Session {
     double last_successful_end_frame_qpc_ms{0.0};
     double begin_frame_qpc_ms{0.0};
     double last_upload_qpc_ms{0.0};
+    // A frame that repaints the HUD also pays for our raster, swapchain
+    // acquire/wait/upload and release, all before xrEndFrame returns. Counting
+    // that interval would report the tool's own cost as the application's, as a
+    // periodic spike at exactly the refresh rate.
+    bool hud_refreshed_this_frame{false};
 
     // Runtime timing selection. SteamVR provides compositor-owned frame
     // records; Meta provides runtime CPU/GPU counters; OpenXR is the universal
@@ -110,8 +116,10 @@ struct Session {
     double last_timing_poll_qpc_ms{0.0};
     int last_timing_source_config{-1};
 
-    // Recent xrWaitFrame display periods; the HUD target is their max, since
-    // some runtimes (VDXR under SSW) alternate half-periods frame to frame.
+    // Recent xrWaitFrame display periods. Runtimes interleave the true panel
+    // period with longer half-rate pacing hints (SteamVR motion smoothing,
+    // VDXR SSW), so the target is drawn from the SHORT end of this window --
+    // taking the max would report half the headset's real refresh rate.
     static constexpr int kPeriodWindow = 90;
     float period_window_ms[kPeriodWindow]{};
     int period_index{0};
@@ -125,7 +133,18 @@ struct Session {
     double unflip_since_ms{0.0};
     int anchor_hand{-1};
     XrPosef anchor_pose{{0, 0, 0, 1}, {0, 0, 0}};
+    XrSpace anchor_space{XR_NULL_HANDLE};
     bool anchor_valid{false};
+    bool controller_available{false};
+    bool controller_availability_known{false};
+    bool fallback_active{false};
+
+    // Floating placements use a softly lagging headset pose so
+    // the panel follows the user without being glued to every head tremor.
+    bool follow_valid{false};
+    XrVector3f follow_position{0, 0, 0};
+    float follow_yaw_rad{0.0f};
+    double last_follow_update_ms{0.0};
 
     // Test pose injection (XRFPS_TEST_POSE=1): a shared-memory grip pose
     // replaces the left controller for automated testing on runtimes without

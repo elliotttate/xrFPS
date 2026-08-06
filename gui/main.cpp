@@ -322,10 +322,30 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         }
 
         if (ImGui::CollapsingHeader("Placement & look", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* controller_positions[] = {
+                "Adaptive controller underside (xrFPS)", "Bottom of left controller",
+                "Bottom of left controller - steep", "Left wrist", "Under left controller",
+                "Bottom of right controller", "Bottom of right controller - steep", "Right wrist",
+                "Under right controller", "Head locked", "Follow below headset"};
+            if (ImGui::Combo("Controller available", &config.controller_placement,
+                             controller_positions, 11)) {
+                dirty = true;
+            }
+            const char* fallback_positions[] = {
+                "Follow below headset", "Follow left of headset", "Follow right of headset",
+                "Head locked", "Fixed below play-space origin", "Fixed left of play-space origin",
+                "Fixed right of play-space origin", "Hidden"};
+            if (ImGui::Combo("Controller unavailable", &config.fallback_placement,
+                             fallback_positions, 8)) {
+                dirty = true;
+            }
+            help("xrFPS switches to the fallback automatically when the controller required by "
+                 "the selected position is disconnected or loses tracking. Head-locked and follow "
+                 "positions stay visible; controller-attached positions use the flip gesture.");
             if (ImGui::SliderFloat("Panel width", &config.panel_width_m, 0.10f, 0.80f, "%.2f m")) {
                 dirty = true;
             }
-            if (ImGui::SliderFloat("Distance from controller", &config.panel_offset_m, 0.0f, 0.40f,
+            if (ImGui::SliderFloat("Adaptive underside distance", &config.panel_offset_m, 0.0f, 0.40f,
                                    "%.2f m")) {
                 dirty = true;
             }

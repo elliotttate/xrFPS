@@ -24,6 +24,8 @@ xrfps::Config from_abi(const XrFpsConfigAbi& in) {
     c.hide_delay_sec = in.hide_delay_sec;
     c.f10_toggle = in.f10_toggle != 0;
     c.timing_source = in.timing_source;
+    c.controller_placement = in.controller_placement;
+    c.fallback_placement = in.fallback_placement;
     c.panel_width_m = in.panel_width_m;
     c.panel_offset_m = in.panel_offset_m;
     c.panel_roll_deg = in.panel_roll_deg;
@@ -59,6 +61,8 @@ void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->hide_delay_sec = c.hide_delay_sec;
     out->f10_toggle = c.f10_toggle;
     out->timing_source = c.timing_source;
+    out->controller_placement = c.controller_placement;
+    out->fallback_placement = c.fallback_placement;
     out->panel_width_m = c.panel_width_m;
     out->panel_offset_m = c.panel_offset_m;
     out->panel_roll_deg = c.panel_roll_deg;

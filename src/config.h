@@ -16,12 +16,26 @@ struct Config {
     float flip_angle_deg{120.0f};
     float show_delay_sec{0.25f};
     float hide_delay_sec{0.5f};
-    bool f10_toggle{true};
+    // Off by default: F10 is bound by plenty of games and desktop tools, and a
+    // stray press would otherwise pin the overlay on with no explanation.
+    bool f10_toggle{false};
     // 0 = Auto, 1 = SteamVR compositor, 2 = Meta performance metrics,
     // 3 = portable OpenXR submission timing.
     int timing_source{0};
 
     // --- placement ---
+    // 0 = adaptive controller underside (the original xrFPS placement),
+    // 1..8 = fixed left/right controller mounting presets,
+    // 9 = head locked, 10 = softly follow below the headset.
+    int controller_placement{0};
+    // Used automatically when the controller required by the selected preset
+    // is not tracked: 0..2 = follow bottom/left/right, 3 = head locked,
+    // 4..6 = fixed LOCAL-space bottom/left/right, 7 = hidden.
+    // Hidden by default so xrFPS stays flip-to-summon as documented: the
+    // fallback placements are persistent, and apps that never attach action
+    // sets have no grip poses at all, which would leave the panel permanently
+    // in view for every one of them.
+    int fallback_placement{7};
     float panel_width_m{0.32f};
     float panel_offset_m{0.11f};
     // Extra roll of the panel about the controller axis, degrees.

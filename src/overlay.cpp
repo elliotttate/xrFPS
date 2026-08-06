@@ -30,6 +30,20 @@ struct V3 {
     float x, y, z;
 };
 
+constexpr float kPi = 3.14159265358979323846f;
+
+enum class PlacementKind { Controller, View, Follow, Fixed, Hidden };
+
+struct PlacementPreset {
+    PlacementKind kind;
+    // 0 = left, 1 = right, -1 = use the gesture-hand selection.
+    int hand;
+    float pitch_deg;
+    float yaw_deg;
+    float roll_deg;
+    V3 offset;
+};
+
 // glm convention: (a*b) applies b first, then a.
 XrQuaternionf qmul(const XrQuaternionf& a, const XrQuaternionf& b) {
     return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -49,6 +63,103 @@ V3 rotate(const XrQuaternionf& q, V3 v) {
             v.z + 2.0f * (u.x * c1.y - u.y * c1.x)};
 }
 
+XrQuaternionf axis_angle(float x, float y, float z, float radians) {
+    const float half = radians * 0.5f;
+    const float sine = std::sin(half);
+    return {x * sine, y * sine, z * sine, std::cos(half)};
+}
+
+// Preset rotations compose as yaw * pitch * roll in OpenXR's right-handed
+// X-right/Y-up/-Z-forward tracking convention.
+XrQuaternionf preset_orientation(float pitch_deg, float yaw_deg, float roll_deg) {
+    const XrQuaternionf yaw = axis_angle(0.0f, 1.0f, 0.0f, yaw_deg * kPi / 180.0f);
+    const XrQuaternionf pitch = axis_angle(1.0f, 0.0f, 0.0f, pitch_deg * kPi / 180.0f);
+    const XrQuaternionf roll = axis_angle(0.0f, 0.0f, 1.0f, roll_deg * kPi / 180.0f);
+    return qmul(qmul(yaw, pitch), roll);
+}
+
+PlacementPreset controller_preset(int value) {
+    // Slot zero is xrFPS's original adaptive underside placement, retained as
+    // the default; 1..8 are fixed mounts around either controller, 9..10 are
+    // anchored to the headset instead.
+    switch (std::clamp(value, 0, 10)) {
+    case 1: return {PlacementKind::Controller, 0, -30, 0, 0, {0.10f, -0.05f, 0.22f}};
+    case 2: return {PlacementKind::Controller, 0, -45, 0, 0, {0.10f, -0.05f, 0.23f}};
+    case 3: return {PlacementKind::Controller, 0, 0, -90, -180, {-0.05f, 0.0f, 0.20f}};
+    case 4: return {PlacementKind::Controller, 0, 90, 0, 180, {0.0f, -0.10f, 0.0f}};
+    case 5: return {PlacementKind::Controller, 1, -30, 0, 0, {-0.10f, -0.05f, 0.22f}};
+    case 6: return {PlacementKind::Controller, 1, -45, 0, 0, {-0.10f, -0.05f, 0.23f}};
+    case 7: return {PlacementKind::Controller, 1, 0, 90, 180, {0.05f, 0.0f, 0.20f}};
+    case 8: return {PlacementKind::Controller, 1, 90, 0, 180, {0.0f, -0.10f, 0.0f}};
+    case 9: return {PlacementKind::View, -1, -15, 0, 0, {0.0f, -0.20f, -0.45f}};
+    case 10: return {PlacementKind::Follow, -1, -60, 0, 0, {0.0f, -0.40f, -0.30f}};
+    default: return {PlacementKind::Controller, -1, 0, 0, 0, {0, 0, 0}};
+    }
+}
+
+PlacementPreset fallback_preset(int value) {
+    // Placements that need no controller pose: follow panels, head locked,
+    // and fixed room anchors.
+    switch (std::clamp(value, 0, 7)) {
+    case 1: return {PlacementKind::Follow, -1, -30, 30, 0, {-0.25f, -0.30f, -0.40f}};
+    case 2: return {PlacementKind::Follow, -1, -30, -30, 0, {0.25f, -0.30f, -0.40f}};
+    case 3: return {PlacementKind::View, -1, -15, 0, 0, {0.0f, -0.20f, -0.45f}};
+    case 4: return {PlacementKind::Fixed, -1, -60, 0, 0, {0.0f, -0.40f, -0.30f}};
+    case 5: return {PlacementKind::Fixed, -1, -30, 30, 0, {-0.25f, -0.30f, -0.40f}};
+    case 6: return {PlacementKind::Fixed, -1, -30, -30, 0, {0.25f, -0.30f, -0.40f}};
+    case 7: return {PlacementKind::Hidden, -1, 0, 0, 0, {0, 0, 0}};
+    default: return {PlacementKind::Follow, -1, -60, 0, 0, {0.0f, -0.40f, -0.30f}};
+    }
+}
+
+XrPosef local_pose(const PlacementPreset& preset, float extra_roll_deg) {
+    XrPosef pose{};
+    pose.orientation = preset_orientation(preset.pitch_deg, preset.yaw_deg,
+                                          preset.roll_deg + extra_roll_deg);
+    pose.position = {preset.offset.x, preset.offset.y, preset.offset.z};
+    return pose;
+}
+
+XrPosef compose_pose(const XrPosef& base, const XrPosef& local) {
+    const V3 translated = rotate(base.orientation,
+                                 {local.position.x, local.position.y, local.position.z});
+    XrPosef result{};
+    result.orientation = qmul(base.orientation, local.orientation);
+    result.position = {base.position.x + translated.x, base.position.y + translated.y,
+                       base.position.z + translated.z};
+    return result;
+}
+
+float wrap_angle(float radians) {
+    while (radians > kPi) radians -= 2.0f * kPi;
+    while (radians < -kPi) radians += 2.0f * kPi;
+    return radians;
+}
+
+float yaw_from_quaternion(const XrQuaternionf& q) {
+    return std::atan2(2.0f * (q.w * q.y + q.x * q.z),
+                      1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+}
+
+// Undoes a partially built swapchain. Leaving the handle set while its upload
+// objects are missing would make the next call succeed at the top and then
+// dereference a null fence.
+void discard_swapchain(Session* s) {
+    if (s->swapchain != XR_NULL_HANDLE) {
+        s->fns->destroySwapchain(s->swapchain);
+        s->swapchain = XR_NULL_HANDLE;
+    }
+    s->images_d3d11.clear();
+    s->images_d3d12.clear();
+    s->d12_allocator.Reset();
+    s->d12_list.Reset();
+    s->d12_fence.Reset();
+    s->d12_upload.Reset();
+    s->d12_upload_ptr = nullptr;
+    s->d12_fence_value = 0;
+    s->ever_uploaded = false;
+}
+
 bool ensure_swapchain(Session* s) {
     if (s->swapchain != XR_NULL_HANDLE) {
         return true;
@@ -56,6 +167,12 @@ bool ensure_swapchain(Session* s) {
     if (s->gfx == Gfx::None) {
         return false;
     }
+    // Give up after a few attempts rather than retrying every single frame for
+    // the life of the session.
+    if (s->swapchain_attempts >= 3) {
+        return false;
+    }
+    ++s->swapchain_attempts;
 
     // Formats are DXGI enums for both D3D11 and D3D12 sessions.
     uint32_t count = 0;
@@ -100,6 +217,11 @@ bool ensure_swapchain(Session* s) {
 
     uint32_t image_count = 0;
     s->fns->enumerateSwapchainImages(s->swapchain, 0, &image_count, nullptr);
+    if (image_count == 0) {
+        flog("swapchain reported no images");
+        discard_swapchain(s);
+        return false;
+    }
     if (s->gfx == Gfx::D3D11) {
         s->images_d3d11.resize(image_count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
         s->fns->enumerateSwapchainImages(s->swapchain, image_count, &image_count,
@@ -115,6 +237,7 @@ bool ensure_swapchain(Session* s) {
                                                     nullptr, IID_PPV_ARGS(&s->d12_list))) ||
             FAILED(s->d12_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&s->d12_fence)))) {
             flog("d3d12 upload objects failed");
+            discard_swapchain(s);
             return false;
         }
         s->d12_list->Close();
@@ -133,10 +256,15 @@ bool ensure_swapchain(Session* s) {
                                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                           IID_PPV_ARGS(&s->d12_upload)))) {
             flog("d3d12 upload buffer failed");
+            discard_swapchain(s);
             return false;
         }
         void* mapped = nullptr;
-        s->d12_upload->Map(0, nullptr, &mapped);
+        if (FAILED(s->d12_upload->Map(0, nullptr, &mapped)) || mapped == nullptr) {
+            flog("d3d12 upload buffer could not be mapped");
+            discard_swapchain(s);
+            return false;
+        }
         s->d12_upload_ptr = (uint8_t*)mapped;
     }
 
@@ -225,6 +353,7 @@ bool update_content(Session* s) {
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     s->fns->releaseSwapchainImage(s->swapchain, &release);
     s->ever_uploaded = true;
+    s->hud_refreshed_this_frame = true;
     s->last_upload_qpc_ms = now;
     // Diagnostics: a refresh that visibly stalls the host frame is a bug —
     // report where the time went (throttled to one line per 2 s).
@@ -235,6 +364,137 @@ bool update_content(Session* s) {
         flog("slow hud refresh: %.2f ms (raster %.2f, acquire+wait %.2f, upload+release %.2f)", total,
              t_rastered - now, t_waited - t_rastered, qpc_ms() - t_waited);
     }
+    return true;
+}
+
+bool hand_allowed(const Session* s, const PlacementPreset& preset, int hand) {
+    if (preset.hand >= 0) {
+        return hand == preset.hand;
+    }
+    return (s->config.hand == 0) || (s->config.hand == 1 && hand == 0) ||
+           (s->config.hand == 2 && hand == 1);
+}
+
+bool selected_controller_available(const Session* s, const PlacementPreset& preset,
+                                   const bool grip_valid[2]) {
+    if (preset.hand >= 0) {
+        return grip_valid[preset.hand];
+    }
+    if (s->config.hand == 1) return grip_valid[0];
+    if (s->config.hand == 2) return grip_valid[1];
+    return grip_valid[0] || grip_valid[1];
+}
+
+bool set_follow_anchor(Session* s, const PlacementPreset& preset, XrTime display_time, double now) {
+    XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
+    if (XR_FAILED(s->fns->locateSpace(s->view_space, s->ref_space, display_time, &head))) {
+        return false;
+    }
+    constexpr XrSpaceLocationFlags kNeeded =
+        XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+    if ((head.locationFlags & kNeeded) != kNeeded) {
+        return false;
+    }
+
+    const float target_yaw = yaw_from_quaternion(head.pose.orientation);
+    const float dx = head.pose.position.x - s->follow_position.x;
+    const float dy = head.pose.position.y - s->follow_position.y;
+    const float dz = head.pose.position.z - s->follow_position.z;
+    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const double elapsed_ms = now - s->last_follow_update_ms;
+    const float dt = (float)std::clamp(elapsed_ms / 1000.0, 0.0, 0.1);
+
+    if (!s->follow_valid || elapsed_ms > 1000.0) {
+        s->follow_position = head.pose.position;
+        s->follow_yaw_rad = target_yaw;
+        s->follow_valid = true;
+    } else {
+        float position_alpha = 1.0f - std::exp(-4.0f * dt);
+        if (distance > 0.5f) position_alpha = std::max(position_alpha, 0.35f);
+        if (distance > 1.5f) position_alpha = 1.0f;
+        s->follow_position.x += dx * position_alpha;
+        s->follow_position.y += dy * position_alpha;
+        s->follow_position.z += dz * position_alpha;
+
+        const float yaw_delta = wrap_angle(target_yaw - s->follow_yaw_rad);
+        const float yaw_degrees = std::fabs(yaw_delta) * 180.0f / kPi;
+        float yaw_alpha = 1.0f - std::exp(-2.5f * dt);
+        if (yaw_degrees > 70.0f) yaw_alpha = std::max(yaw_alpha, 0.20f);
+        if (yaw_degrees > 110.0f) yaw_alpha = 1.0f;
+        s->follow_yaw_rad = wrap_angle(s->follow_yaw_rad + yaw_delta * yaw_alpha);
+    }
+    s->last_follow_update_ms = now;
+
+    XrPosef smoothed_head{};
+    smoothed_head.orientation = axis_angle(0.0f, 1.0f, 0.0f, s->follow_yaw_rad);
+    smoothed_head.position = s->follow_position;
+    s->anchor_pose = compose_pose(smoothed_head, local_pose(preset, s->config.panel_roll_deg));
+    s->anchor_space = s->ref_space;
+    s->anchor_valid = true;
+    return true;
+}
+
+bool set_non_controller_anchor(Session* s, const PlacementPreset& preset, XrTime display_time,
+                               double now) {
+    switch (preset.kind) {
+    case PlacementKind::View:
+        s->anchor_pose = local_pose(preset, s->config.panel_roll_deg);
+        s->anchor_space = s->view_space;
+        s->anchor_valid = true;
+        return true;
+    case PlacementKind::Follow:
+        return set_follow_anchor(s, preset, display_time, now);
+    case PlacementKind::Fixed:
+        s->anchor_pose = local_pose(preset, s->config.panel_roll_deg);
+        s->anchor_space = s->ref_space;
+        s->anchor_valid = true;
+        return true;
+    case PlacementKind::Hidden:
+    case PlacementKind::Controller:
+    default:
+        return false;
+    }
+}
+
+bool set_controller_anchor(Session* s, const PlacementPreset& preset, const XrPosef grip_pose[2],
+                           const bool grip_valid[2], XrTime display_time, double now) {
+    if (preset.kind != PlacementKind::Controller) {
+        return set_non_controller_anchor(s, preset, display_time, now);
+    }
+
+    int hand = preset.hand;
+    if (hand < 0) {
+        hand = s->anchor_hand;
+        if (hand < 0 || !grip_valid[hand] || !hand_allowed(s, preset, hand)) {
+            hand = grip_valid[0] && hand_allowed(s, preset, 0) ? 0
+                   : (grip_valid[1] && hand_allowed(s, preset, 1) ? 1 : -1);
+        }
+    }
+    if (hand < 0 || !grip_valid[hand]) {
+        return false;
+    }
+    s->anchor_hand = hand;
+
+    if (s->config.controller_placement == 0) {
+        // Original xrFPS adaptive underside position. Keeping it as its own
+        // preset means existing configs and the distance slider behave exactly
+        // as before.
+        const float roll = s->config.panel_roll_deg * kPi / 180.0f;
+        const XrQuaternionf flip_z{0.0f, 0.0f, 1.0f, 0.0f};
+        const XrQuaternionf user_roll = axis_angle(0.0f, 0.0f, 1.0f, roll);
+        s->anchor_pose.orientation =
+            qmul(qmul(grip_pose[hand].orientation, flip_z), user_roll);
+        const V3 off = rotate(grip_pose[hand].orientation,
+                              {0.0f, -s->config.panel_offset_m, 0.0f});
+        s->anchor_pose.position = {grip_pose[hand].position.x + off.x,
+                                   grip_pose[hand].position.y + off.y,
+                                   grip_pose[hand].position.z + off.z};
+    } else {
+        s->anchor_pose =
+            compose_pose(grip_pose[hand], local_pose(preset, s->config.panel_roll_deg));
+    }
+    s->anchor_space = s->ref_space;
+    s->anchor_valid = true;
     return true;
 }
 
@@ -260,8 +520,7 @@ void update_gesture(Session* s, XrTime display_time) {
         }
     }
 
-    bool flipped = false;
-    XrPosef grip_pose[2];
+    XrPosef grip_pose[2]{};
     bool grip_valid[2]{false, false};
     for (int hand = 0; hand < 2; ++hand) {
         if (s->grip_space[hand] == XR_NULL_HANDLE) {
@@ -271,8 +530,12 @@ void update_gesture(Session* s, XrTime display_time) {
         if (XR_FAILED(s->fns->locateSpace(s->grip_space[hand], s->ref_space, display_time, &loc))) {
             continue;
         }
+        // TRACKED as well as VALID: runtimes keep VALID set on a controller
+        // they have lost, serving the last known pose. Accepting that would
+        // freeze the panel in mid-air instead of handing over to the fallback.
         constexpr XrSpaceLocationFlags kNeeded =
-            XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+            XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT |
+            XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
         if ((loc.locationFlags & kNeeded) != kNeeded) {
             continue;
         }
@@ -287,17 +550,23 @@ void update_gesture(Session* s, XrTime display_time) {
         grip_valid[0] = true;
     }
 
+    const PlacementPreset placement = controller_preset(s->config.controller_placement);
+    const bool available = selected_controller_available(s, placement, grip_valid);
+    if (!s->controller_availability_known || available != s->controller_available) {
+        s->controller_availability_known = true;
+        s->controller_available = available;
+        flog("selected controller: %s; %s placement active", available ? "tracked" : "unavailable",
+             available ? "controller" : "fallback");
+    }
+    s->fallback_active = !available;
+
     // "Upside down" is the grip's up-vector tipped past the configured angle;
     // cos() converts the user-facing degrees into the comparison directly.
-    const float flip_cos = std::cos(std::clamp(s->config.flip_angle_deg, 45.0f, 179.0f) * 3.14159265f / 180.0f);
+    bool flipped = false;
+    const float flip_cos =
+        std::cos(std::clamp(s->config.flip_angle_deg, 45.0f, 179.0f) * kPi / 180.0f);
     for (int hand = 0; hand < 2; ++hand) {
-        if (!grip_valid[hand]) {
-            continue;
-        }
-        if (s->config.hand == 1 && hand != 0) {
-            continue;
-        }
-        if (s->config.hand == 2 && hand != 1) {
+        if (!grip_valid[hand] || !hand_allowed(s, placement, hand)) {
             continue;
         }
         const V3 up = rotate(grip_pose[hand].orientation, {0.0f, 1.0f, 0.0f});
@@ -305,24 +574,6 @@ void update_gesture(Session* s, XrTime display_time) {
             flipped = true;
             s->anchor_hand = hand;
         }
-    }
-
-    // The panel is rigidly attached to the bottom of the flipped controller:
-    // its orientation is the grip orientation rolled 180 degrees (so the face
-    // points out of the controller's underside) and it follows the
-    // controller's exact angle every frame — no billboarding.
-    if (s->anchor_hand >= 0 && grip_valid[s->anchor_hand] && (flipped || s->visible)) {
-        const XrPosef& grip = grip_pose[s->anchor_hand];
-        // 180 degrees about Z puts the face on the controller's underside; the
-        // configured roll then tilts the panel about its own view axis.
-        const float roll = s->config.panel_roll_deg * 3.14159265f / 180.0f;
-        const XrQuaternionf flip_z{0.0f, 0.0f, 1.0f, 0.0f};
-        const XrQuaternionf user_roll{0.0f, 0.0f, std::sin(roll * 0.5f), std::cos(roll * 0.5f)};
-        s->anchor_pose.orientation = qmul(qmul(grip.orientation, flip_z), user_roll);
-        const V3 off = rotate(grip.orientation, {0.0f, -s->config.panel_offset_m, 0.0f});
-        s->anchor_pose.position = {grip.position.x + off.x, grip.position.y + off.y,
-                                   grip.position.z + off.z};
-        s->anchor_valid = true;
     }
 
     if (flipped) {
@@ -345,14 +596,40 @@ void update_gesture(Session* s, XrTime display_time) {
         }
     }
 
-    // F10 toggles a head-locked fallback (also works when no controller binds).
+    // F10 forces the HUD visible when no gesture can (unbound controllers, a
+    // seated game). GetAsyncKeyState is system-wide, so require this process to
+    // own the foreground window -- otherwise F10 pressed in any other
+    // application would silently pin an overlay inside the game.
     if (s->config.f10_toggle) {
-        const bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+        bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+        if (f10) {
+            DWORD foreground_pid = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &foreground_pid);
+            f10 = foreground_pid == GetCurrentProcessId();
+        }
         if (f10 && !s->f10_was_down) {
             s->force_show = !s->force_show;
             flog("F10 force-show: %d", (int)s->force_show);
         }
         s->f10_was_down = f10;
+    }
+
+    // Resolve the overlay transform after visibility and tracking state. A
+    // missing selected controller activates its independent fallback profile
+    // immediately. The fallback is intentionally persistent:
+    // otherwise there would be no controller gesture available to summon it.
+    s->anchor_valid = false;
+    s->anchor_space = XR_NULL_HANDLE;
+    if (s->fallback_active) {
+        set_non_controller_anchor(s, fallback_preset(s->config.fallback_placement), display_time,
+                                  now);
+    } else if (s->visible || placement.kind == PlacementKind::View ||
+               placement.kind == PlacementKind::Follow) {
+        // Controller-attached presets retain xrFPS's flip-to-show behavior.
+        // Headset and follow presets are persistent instead: they stay up
+        // while the selected controller is available, so switching away from
+        // the controller-off fallback cannot make the overlay disappear.
+        set_controller_anchor(s, placement, grip_pose, grip_valid, display_time, now);
     }
 }
 
@@ -583,7 +860,13 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
     if (period_ns <= 0) {
         return;
     }
+    // Reject physically impossible periods outright (>1000 Hz or <5 Hz): a
+    // single bogus value must never become the target the whole HUD is scaled
+    // against.
     const float ms = (float)((double)period_ns / 1e6);
+    if (ms < 1.0f || ms > 200.0f) {
+        return;
+    }
     s->period_window_ms[s->period_index] = ms;
     s->period_index = (s->period_index + 1) % Session::kPeriodWindow;
     if (s->period_count < Session::kPeriodWindow) {
@@ -591,15 +874,21 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
     }
 
     // Runtimes mix the true panel period with longer half-rate pacing hints
-    // (SteamVR motion smoothing, VDXR SSW). The panel's real period is the
-    // SHORTEST value reported; adopt the recent min, with hysteresis so the
-    // HUD's colors and graph scale never flicker.
-    float min_ms = 1000.0f;
-    for (int i = 0; i < s->period_count; ++i) {
-        min_ms = std::min(min_ms, s->period_window_ms[i]);
-    }
-    if (s->stats.target_ms <= 0.5f || std::fabs(min_ms - s->stats.target_ms) > s->stats.target_ms * 0.05f) {
-        s->stats.target_ms = min_ms;
+    // (SteamVR motion smoothing, VDXR SSW), so the real period lives at the
+    // short end of the window. Take a low percentile rather than the outright
+    // minimum: the true period occupies at least half the window, while one
+    // freak short reading would drag a plain min far below the panel's rate and
+    // hold it there for the rest of the window.
+    float sorted[Session::kPeriodWindow];
+    std::copy_n(s->period_window_ms, s->period_count, sorted);
+    const int nth = s->period_count / 10;
+    std::nth_element(sorted, sorted + nth, sorted + s->period_count);
+    const float floor_ms = sorted[nth];
+
+    // Hysteresis keeps the HUD's colors and graph scale from flickering.
+    if (s->stats.target_ms <= 0.5f ||
+        std::fabs(floor_ms - s->stats.target_ms) > s->stats.target_ms * 0.05f) {
+        s->stats.target_ms = floor_ms;
     }
 }
 
@@ -630,7 +919,10 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
 
     const XrFrameEndInfo* submit_info = frame_end_info;
     XrFrameEndInfo modified{XR_TYPE_FRAME_END_INFO};
-    const bool show = s->config.enabled && ((s->visible && s->anchor_valid) || s->force_show);
+    // update_gesture only resolves an anchor when the chosen placement should
+    // be visible, including persistent fallback/headset/follow modes.
+    const bool placed_show = s->anchor_valid;
+    const bool show = s->config.enabled && (placed_show || s->force_show);
     if (show && s->gfx != Gfx::None && frame_end_info->layerCount + 1 <= s->max_layers &&
         ensure_swapchain(s) && update_content(s)) {
         s->quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -641,8 +933,11 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
         s->quad.subImage.imageRect = {{0, 0}, {HUD_W, HUD_H}};
         const float width_m = std::clamp(s->config.panel_width_m, 0.05f, 2.0f);
         s->quad.size = {width_m, width_m * kQuadAspect};
-        if (s->visible && s->anchor_valid) {
-            s->quad.space = s->ref_space;
+        if (placed_show) {
+            // force_show controls visibility only. Letting it override a
+            // resolved anchor would yank a controller-mounted panel to the
+            // face and leave no clue as to why.
+            s->quad.space = s->anchor_space;
             s->quad.pose = s->anchor_pose;
         } else {
             s->quad.space = s->view_space;
@@ -664,8 +959,12 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     const XrResult result = s->fns->endFrame(s->session, submit_info);
     const double completed = qpc_ms();
     if (XR_SUCCEEDED(result)) {
+        // This interval spans update_content above, so drop it whenever the HUD
+        // repainted; SteamVR reads its frames from the compositor and is
+        // unaffected either way. The clock still advances, so the next interval
+        // is measured from here rather than accumulating the gap.
         if (s->stats.source != TimingBackend::SteamVR &&
-            s->last_successful_end_frame_qpc_ms > 0.0) {
+            s->last_successful_end_frame_qpc_ms > 0.0 && !s->hud_refreshed_this_frame) {
             const float frame_ms = (float)(completed - s->last_successful_end_frame_qpc_ms);
             if (s->stats.source == TimingBackend::Meta) {
                 s->stats.push(frame_ms, s->latest_meta_cpu_ms, s->latest_meta_gpu_ms);
@@ -675,6 +974,7 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
         }
         s->last_successful_end_frame_qpc_ms = completed;
     }
+    s->hud_refreshed_this_frame = false;
     s->session_info.publish_timing(s->stats.source, s->config.timing_source, s->stats,
                                    timing_source_name(s));
     return result;

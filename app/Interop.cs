@@ -15,6 +15,8 @@ public struct NativeConfig
     public int F10Toggle;
     public int TimingSource;
 
+    public int ControllerPlacement;
+    public int FallbackPlacement;
     public float PanelWidthM;
     public float PanelOffsetM;
     public float PanelRollDeg;

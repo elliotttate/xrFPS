@@ -91,6 +91,7 @@ bool SteamVrTiming::start() {
     next_retry_tick_ = now + 2000;
 
     HMODULE module = GetModuleHandleW(L"openvr_api.dll");
+    const bool loaded_by_us = module == nullptr;
     if (module == nullptr) {
         for (const auto& candidate : openvr_candidates()) {
             if (!std::filesystem::exists(candidate)) {
@@ -138,8 +139,25 @@ bool SteamVrTiming::start() {
 
     module_ = module;
     compositor_ = compositor;
+    owns_runtime_ = loaded_by_us;
     status_ = "SteamVR compositor";
     return true;
+}
+
+void SteamVrTiming::stop() {
+    if (compositor_ != nullptr && owns_runtime_ && module_ != nullptr) {
+        using ShutdownFn = void(VR_CALLTYPE*)();
+        if (auto shutdown = reinterpret_cast<ShutdownFn>(
+                GetProcAddress(static_cast<HMODULE>(module_), "VR_ShutdownInternal"))) {
+            shutdown();
+        }
+        FreeLibrary(static_cast<HMODULE>(module_));
+    }
+    module_ = nullptr;
+    compositor_ = nullptr;
+    owns_runtime_ = false;
+    primed_ = false;
+    status_ = "not initialized";
 }
 
 int SteamVrTiming::collect(RuntimeTimingSample* output, int capacity) {
