@@ -19,6 +19,7 @@
 #include "metrics.h"
 #include "stats.h"
 #include "timing.h"
+#include "capture_shared.h"
 
 namespace xrfps {
 
@@ -160,6 +161,13 @@ struct Session {
     double last_config_check_ms{0.0};
     MetricsReader metrics{};
     SessionPublisher session_info{};
+
+    // Window capture shared memory mapping
+    HANDLE capture_mapping_{};
+    const void* capture_view_{};
+    uint32_t current_swapchain_width{0};
+    uint32_t current_swapchain_height{0};
+    uint32_t last_capture_sequence{0};
 
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};

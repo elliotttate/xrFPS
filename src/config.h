@@ -70,6 +70,11 @@ struct Config {
     bool show_gpu_clock{false};
     bool show_ram{false};
 
+    // --- window capture ---
+    bool window_mirror_enabled{false};
+    int mirror_max_width{1024};
+    int mirror_fps{30};
+
     // Where the config lives: %LOCALAPPDATA%\xrFPS\config.txt
     static std::string path();
 

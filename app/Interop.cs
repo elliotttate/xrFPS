@@ -43,6 +43,10 @@ public struct NativeConfig
     public int ShowCpuTemp;
     public int ShowGpuClock;
     public int ShowRam;
+
+    public int WindowMirrorEnabled;
+    public int MirrorMaxWidth;
+    public int MirrorFps;
 }
 
 [StructLayout(LayoutKind.Sequential)]

@@ -33,6 +33,24 @@ public sealed partial class MainWindow : Window
 
     private static readonly int[] PreviewRates = { 72, 80, 90, 120, 144 };
 
+    // --- Window capture service and window handle tracking ---
+    private WindowCaptureService? _captureService;
+    private readonly System.Collections.Generic.List<IntPtr> _windowHandles = new();
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetShellWindow();
+
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
@@ -42,6 +60,7 @@ public sealed partial class MainWindow : Window
         ("OVERLAY", "Gesture", "Choose the flip gesture, floating position, and automatic no-controller fallback."),
         ("OVERLAY", "Placement & look", "Control where the HUD sits and how it appears in the headset."),
         ("OVERLAY", "Readouts", "Choose the frame statistics and system metrics shown on the HUD."),
+        ("OVERLAY", "Window Mirroring", "Display any open desktop window in the OpenXR overlay instead of the HUD."),
         ("SETUP", "Installation", "Install, repair, or remove the per-user OpenXR API layer."),
     };
 
@@ -75,9 +94,10 @@ public sealed partial class MainWindow : Window
         PreviewImage.Source = _preview;
         PreviewImage2.Source = _preview;
         PreviewImage3.Source = _preview;
+        PreviewImageMirror.Source = _preview;
 
-        _navItems = new[] { NavDashboard, NavGesture, NavAppearance, NavReadouts, NavInstall };
-        _pages = new[] { PageDashboard, PageGesture, PageAppearance, PageReadouts, PageInstall };
+        _navItems = new[] { NavDashboard, NavGesture, NavAppearance, NavReadouts, NavMirror, NavInstall };
+        _pages = new[] { PageDashboard, PageGesture, PageAppearance, PageReadouts, PageMirror, PageInstall };
         _previewRateCombos = new[] { PreviewRateCombo1, PreviewRateCombo2, PreviewRateCombo3 };
         _syncingPreviewRate = true;
         foreach (ComboBox combo in _previewRateCombos)
@@ -143,6 +163,8 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _shutdown.Cancel();
+            _captureService?.Stop();
+            _captureService = null;
             Native.xrfps_config_save(ref _config);
             lock (_metricsGate)
             {
@@ -199,6 +221,7 @@ public sealed partial class MainWindow : Window
         SetPreviewLayout(DashboardTopGrid, DashboardPreviewCard, useSidePreview);
         SetPreviewLayout(AppearanceGrid, AppearancePreviewCard, useSidePreview);
         SetPreviewLayout(ReadoutsGrid, ReadoutsPreviewCard, useSidePreview);
+        SetPreviewLayout(MirrorGrid, MirrorPreviewCard, useSidePreview);
 
         int metricColumns = e.NewSize.Width >= 940 ? 5 : e.NewSize.Width >= 620 ? 3 : 2;
         FrameworkElement[] tiles = { MetricCpu, MetricGpu, MetricVram, MetricTemp, MetricApp };
@@ -263,6 +286,14 @@ public sealed partial class MainWindow : Window
         ShowCpuTemp.IsChecked = _config.ShowCpuTemp != 0;
         ShowGpuClock.IsChecked = _config.ShowGpuClock != 0;
         ShowRam.IsChecked = _config.ShowRam != 0;
+
+        WindowMirrorToggle.IsOn = _config.WindowMirrorEnabled != 0;
+        MirrorMaxWidthSlider.Value = _config.MirrorMaxWidth == 0 ? 1024 : _config.MirrorMaxWidth;
+        MirrorFpsSlider.Value = _config.MirrorFps == 0 ? 30 : _config.MirrorFps;
+        MirrorMaxWidthLabel.Text = $"Maximum Width: {MirrorMaxWidthSlider.Value}px";
+        MirrorFpsLabel.Text = $"Capture Target: {MirrorFpsSlider.Value} FPS";
+        PopulateWindowList();
+
         _loading = false;
         UpdateValueLabels();
     }
@@ -312,6 +343,10 @@ public sealed partial class MainWindow : Window
         _config.ShowCpuTemp = ShowCpuTemp.IsChecked == true ? 1 : 0;
         _config.ShowGpuClock = ShowGpuClock.IsChecked == true ? 1 : 0;
         _config.ShowRam = ShowRam.IsChecked == true ? 1 : 0;
+
+        _config.WindowMirrorEnabled = WindowMirrorToggle.IsOn ? 1 : 0;
+        _config.MirrorMaxWidth = (int)MirrorMaxWidthSlider.Value;
+        _config.MirrorFps = (int)MirrorFpsSlider.Value;
 
         UpdateValueLabels();
         RenderPreview();
@@ -713,5 +748,94 @@ public sealed partial class MainWindow : Window
         ActionInfoBar.Message = message;
         ActionInfoBar.Severity = severity;
         ActionInfoBar.IsOpen = true;
+    }
+
+    private void MirrorToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        Setting_Changed(sender, e);
+        StartOrUpdateCapture();
+    }
+
+    private void MirrorMaxWidth_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (MirrorMaxWidthLabel != null)
+        {
+            MirrorMaxWidthLabel.Text = $"Maximum Width: {e.NewValue:0}px";
+        }
+        Setting_Changed(sender, e);
+        StartOrUpdateCapture();
+    }
+
+    private void MirrorFps_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (MirrorFpsLabel != null)
+        {
+            MirrorFpsLabel.Text = $"Capture Target: {e.NewValue:0} FPS";
+        }
+        Setting_Changed(sender, e);
+        StartOrUpdateCapture();
+    }
+
+    private void TargetWindow_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        StartOrUpdateCapture();
+    }
+
+    private void RefreshWindows_Click(object sender, RoutedEventArgs e)
+    {
+        PopulateWindowList();
+    }
+
+    private void PopulateWindowList()
+    {
+        _windowHandles.Clear();
+        TargetWindowCombo.Items.Clear();
+
+        IntPtr shellWindow = GetShellWindow();
+
+        EnumWindows((hWnd, lParam) =>
+        {
+            if (hWnd == shellWindow) return true;
+            if (!IsWindowVisible(hWnd)) return true;
+
+            IntPtr ourHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (hWnd == ourHwnd) return true;
+
+            StringBuilder titleBuilder = new StringBuilder(256);
+            GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
+            string title = titleBuilder.ToString();
+
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                if (title != "Settings" && title != "Microsoft Text Input Application" && title != "Program Manager")
+                {
+                    _windowHandles.Add(hWnd);
+                    TargetWindowCombo.Items.Add(title);
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        if (TargetWindowCombo.Items.Count > 0)
+        {
+            TargetWindowCombo.SelectedIndex = 0;
+        }
+    }
+
+    private void StartOrUpdateCapture()
+    {
+        _captureService?.Stop();
+        _captureService = null;
+
+        if (WindowMirrorToggle.IsOn && TargetWindowCombo.SelectedIndex >= 0 &&
+            TargetWindowCombo.SelectedIndex < _windowHandles.Count)
+        {
+            IntPtr hwnd = _windowHandles[TargetWindowCombo.SelectedIndex];
+            int maxWidth = (int)MirrorMaxWidthSlider.Value;
+            int fps = (int)MirrorFpsSlider.Value;
+
+            _captureService = new WindowCaptureService(hwnd, maxWidth, fps);
+            _captureService.Start();
+        }
     }
 }
