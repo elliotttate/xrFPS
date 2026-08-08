@@ -98,6 +98,9 @@ bool Config::load(const std::string& file) {
         else if (key == "show_cpu_temp") { show_cpu_temp = as_bool(); }
         else if (key == "show_gpu_clock") { show_gpu_clock = as_bool(); }
         else if (key == "show_ram") { show_ram = as_bool(); }
+        else if (key == "window_mirror_enabled") { window_mirror_enabled = as_bool(); }
+        else if (key == "mirror_max_width") { mirror_max_width = as_int(); }
+        else if (key == "mirror_fps") { mirror_fps = as_int(); }
     }
     fclose(f);
     return true;
@@ -147,6 +150,10 @@ bool Config::save(const std::string& file) const {
     fprintf(f, "show_cpu_temp = %d\n", show_cpu_temp ? 1 : 0);
     fprintf(f, "show_gpu_clock = %d\n", show_gpu_clock ? 1 : 0);
     fprintf(f, "show_ram = %d\n", show_ram ? 1 : 0);
+    fprintf(f, "\n# window capture\n");
+    fprintf(f, "window_mirror_enabled = %d\n", window_mirror_enabled ? 1 : 0);
+    fprintf(f, "mirror_max_width = %d\n", mirror_max_width);
+    fprintf(f, "mirror_fps = %d\n", mirror_fps);
     fclose(f);
 
     return MoveFileExA(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;

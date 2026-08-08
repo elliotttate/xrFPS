@@ -50,6 +50,9 @@ xrfps::Config from_abi(const XrFpsConfigAbi& in) {
     c.show_cpu_temp = in.show_cpu_temp != 0;
     c.show_gpu_clock = in.show_gpu_clock != 0;
     c.show_ram = in.show_ram != 0;
+    c.window_mirror_enabled = in.window_mirror_enabled != 0;
+    c.mirror_max_width = in.mirror_max_width;
+    c.mirror_fps = in.mirror_fps;
     return c;
 }
 
@@ -87,6 +90,9 @@ void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->show_cpu_temp = c.show_cpu_temp;
     out->show_gpu_clock = c.show_gpu_clock;
     out->show_ram = c.show_ram;
+    out->window_mirror_enabled = c.window_mirror_enabled ? 1 : 0;
+    out->mirror_max_width = c.mirror_max_width;
+    out->mirror_fps = c.mirror_fps;
 }
 
 void copy_string(const std::string& value, char* buffer, int32_t length) {

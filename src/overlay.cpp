@@ -160,9 +160,45 @@ void discard_swapchain(Session* s) {
     s->ever_uploaded = false;
 }
 
+const CaptureHeader* get_capture_header(Session* s) {
+    if (s->capture_view_ == nullptr) {
+        s->capture_mapping_ = OpenFileMappingA(FILE_MAP_READ, FALSE, CaptureHeader::kName);
+        if (s->capture_mapping_ != nullptr) {
+            s->capture_view_ = MapViewOfFile(s->capture_mapping_, FILE_MAP_READ, 0, 0, kCaptureMemorySize);
+            if (s->capture_view_ == nullptr) {
+                CloseHandle(s->capture_mapping_);
+                s->capture_mapping_ = nullptr;
+            }
+        }
+    }
+    if (s->capture_view_ != nullptr) {
+        const auto* header = (const CaptureHeader*)s->capture_view_;
+        if (header->active != 0) {
+            return header;
+        }
+    }
+    return nullptr;
+}
+
 bool ensure_swapchain(Session* s) {
+    uint32_t target_w = HUD_W;
+    uint32_t target_h = HUD_H;
+    if (s->config.window_mirror_enabled) {
+        const CaptureHeader* header = get_capture_header(s);
+        if (header && header->width > 0 && header->height > 0) {
+            target_w = header->width;
+            target_h = header->height;
+        }
+    }
+
     if (s->swapchain != XR_NULL_HANDLE) {
-        return true;
+        if (s->current_swapchain_width != target_w || s->current_swapchain_height != target_h) {
+            flog("swapchain size changed from %dx%d to %dx%d; recreating",
+                 s->current_swapchain_width, s->current_swapchain_height, target_w, target_h);
+            discard_swapchain(s);
+        } else {
+            return true;
+        }
     }
     if (s->gfx == Gfx::None) {
         return false;
@@ -200,8 +236,8 @@ bool ensure_swapchain(Session* s) {
                       XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     info.format = chosen;
     info.sampleCount = 1;
-    info.width = HUD_W;
-    info.height = HUD_H;
+    info.width = target_w;
+    info.height = target_h;
     info.faceCount = 1;
     info.arraySize = 1;
     info.mipCount = 1;
@@ -246,7 +282,7 @@ bool ensure_swapchain(Session* s) {
         heap.Type = D3D12_HEAP_TYPE_UPLOAD;
         D3D12_RESOURCE_DESC desc{};
         desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        desc.Width = HUD_W * HUD_H * 4;
+        desc.Width = target_w * target_h * 4;
         desc.Height = 1;
         desc.DepthOrArraySize = 1;
         desc.MipLevels = 1;
@@ -268,8 +304,10 @@ bool ensure_swapchain(Session* s) {
         s->d12_upload_ptr = (uint8_t*)mapped;
     }
 
-    s->pixels.resize(HUD_W * HUD_H * 4);
-    flog("swapchain ready: format %lld, %u images, %s", (long long)chosen, image_count,
+    s->pixels.resize(target_w * target_h * 4);
+    s->current_swapchain_width = target_w;
+    s->current_swapchain_height = target_h;
+    flog("swapchain ready: format %lld, %u images, %s (%dx%d)", (long long)chosen, image_count,
          s->gfx == Gfx::D3D11 ? "d3d11" : "d3d12");
     return true;
 }
@@ -277,23 +315,40 @@ bool ensure_swapchain(Session* s) {
 // Renders the HUD and moves it into the current swapchain image. Returns false
 // if nothing has ever been uploaded (the quad must not be shown yet).
 bool update_content(Session* s) {
-    // Refresh the pixels at ~10 Hz, not every frame: the acquire/upload/release
-    // round-trip runs on the app's render thread inside xrEndFrame, and some
-    // runtimes block in xrWaitSwapchainImage — repainting per frame adds real
-    // latency to the host app. Between refreshes the quad keeps compositing
-    // the last released image at zero cost.
-    const double kHudRefreshIntervalMs =
-        1000.0 / std::clamp(s->config.hud_refresh_hz, 1.0f, 30.0f);
+    const bool is_mirror = s->config.window_mirror_enabled;
+    const CaptureHeader* header = is_mirror ? get_capture_header(s) : nullptr;
     const double now = qpc_ms();
-    if (s->ever_uploaded && now - s->last_upload_qpc_ms < kHudRefreshIntervalMs) {
-        return true;
+
+    if (is_mirror) {
+        if (header == nullptr || header->width == 0 || header->height == 0) {
+            return s->ever_uploaded; // wait for active capture
+        }
+        if (s->ever_uploaded && header->sequence == s->last_capture_sequence) {
+            return true; // no new frame, reuse last
+        }
+    } else {
+        // Refresh the pixels at ~10 Hz, not every frame: the acquire/upload/release
+        // round-trip runs on the app's render thread inside xrEndFrame, and some
+        // runtimes block in xrWaitSwapchainImage — repainting per frame adds real
+        // latency to the host app. Between refreshes the quad keeps compositing
+        // the last released image at zero cost.
+        const double kHudRefreshIntervalMs =
+            1000.0 / std::clamp(s->config.hud_refresh_hz, 1.0f, 30.0f);
+        if (s->ever_uploaded && now - s->last_upload_qpc_ms < kHudRefreshIntervalMs) {
+            return true;
+        }
     }
 
     if (s->gfx == Gfx::D3D12 && s->d12_fence->GetCompletedValue() < s->d12_fence_value) {
         return s->ever_uploaded; // previous copy still in flight; reuse last released image
     }
 
-    hud_render(s->pixels.data(), s->stats, s->config, s->metrics.get(), s->swapchain_bgra);
+    if (is_mirror) {
+        const uint8_t* src_pixels = (const uint8_t*)s->capture_view_ + sizeof(CaptureHeader);
+        std::memcpy(s->pixels.data(), src_pixels, s->pixels.size());
+    } else {
+        hud_render(s->pixels.data(), s->stats, s->config, s->metrics.get(), s->swapchain_bgra);
+    }
     const double t_rastered = qpc_ms();
 
     uint32_t index = 0;
@@ -312,7 +367,7 @@ bool update_content(Session* s) {
 
     if (s->gfx == Gfx::D3D11) {
         s->d11_context->UpdateSubresource(s->images_d3d11[index].texture, 0, nullptr, s->pixels.data(),
-                                          HUD_W * 4, 0);
+                                          s->current_swapchain_width * 4, 0);
     } else {
         std::memcpy(s->d12_upload_ptr, s->pixels.data(), s->pixels.size());
 
@@ -335,10 +390,10 @@ bool update_content(Session* s) {
         src.pResource = s->d12_upload.Get();
         src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         src.PlacedFootprint.Footprint.Format = (DXGI_FORMAT)s->swapchain_format;
-        src.PlacedFootprint.Footprint.Width = HUD_W;
-        src.PlacedFootprint.Footprint.Height = HUD_H;
+        src.PlacedFootprint.Footprint.Width = s->current_swapchain_width;
+        src.PlacedFootprint.Footprint.Height = s->current_swapchain_height;
         src.PlacedFootprint.Footprint.Depth = 1;
-        src.PlacedFootprint.Footprint.RowPitch = HUD_W * 4; // 2048, already 256-aligned
+        src.PlacedFootprint.Footprint.RowPitch = s->current_swapchain_width * 4; // ensured 256-aligned in capture
         s->d12_list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
         std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
@@ -355,6 +410,9 @@ bool update_content(Session* s) {
     s->ever_uploaded = true;
     s->hud_refreshed_this_frame = true;
     s->last_upload_qpc_ms = now;
+    if (is_mirror) {
+        s->last_capture_sequence = header->sequence;
+    }
     // Diagnostics: a refresh that visibly stalls the host frame is a bug —
     // report where the time went (throttled to one line per 2 s).
     const double total = qpc_ms() - now;
@@ -853,6 +911,12 @@ void session_destroy(Session* s) {
     if (s->test_pose_mapping != nullptr) {
         CloseHandle(s->test_pose_mapping);
     }
+    if (s->capture_view_ != nullptr) {
+        UnmapViewOfFile(s->capture_view_);
+    }
+    if (s->capture_mapping_ != nullptr) {
+        CloseHandle(s->capture_mapping_);
+    }
     delete s;
 }
 
@@ -930,9 +994,10 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
                              XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
         s->quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         s->quad.subImage.swapchain = s->swapchain;
-        s->quad.subImage.imageRect = {{0, 0}, {HUD_W, HUD_H}};
+        s->quad.subImage.imageRect = {{0, 0}, {(int32_t)s->current_swapchain_width, (int32_t)s->current_swapchain_height}};
         const float width_m = std::clamp(s->config.panel_width_m, 0.05f, 2.0f);
-        s->quad.size = {width_m, width_m * kQuadAspect};
+        const float aspect = (float)s->current_swapchain_height / (float)s->current_swapchain_width;
+        s->quad.size = {width_m, width_m * aspect};
         if (placed_show) {
             // force_show controls visibility only. Letting it override a
             // resolved anchor would yank a controller-mounted panel to the

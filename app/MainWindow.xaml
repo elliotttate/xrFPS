@@ -78,9 +78,18 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
+                    x:Name="NavMirror"
+                    Content="Window Mirroring"
+                    Tag="4"
+                    AutomationProperties.Name="Window Mirroring">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE7F4;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
                     x:Name="NavInstall"
                     Content="Installation"
-                    Tag="4"
+                    Tag="5"
                     AutomationProperties.Name="Installation">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE896;" />
@@ -702,6 +711,100 @@
                                         </Border>
                                         <TextBlock
                                             Text="System rows arrange in two columns so the frametime graph keeps a readable minimum height."
+                                            Style="{StaticResource MutedTextStyle}"
+                                            FontSize="11" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- WINDOW MIRRORING -->
+                        <StackPanel x:Name="PageMirror" Spacing="18" Visibility="Collapsed">
+                            <Grid x:Name="MirrorGrid" ColumnSpacing="18" RowSpacing="18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="330" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                    <StackPanel Spacing="16">
+                                        <TextBlock Text="Desktop Window Capture" Style="{StaticResource CardTitleStyle}" />
+                                        <TextBlock
+                                            Style="{StaticResource MutedTextStyle}"
+                                            FontSize="13"
+                                            Text="Display the content of any open desktop window (e.g. web browser) inside the VR overlay instead of the FPS metrics HUD. Standard placement settings still apply." />
+
+                                        <ToggleSwitch
+                                            x:Name="WindowMirrorToggle"
+                                            Header="Enable Window Mirroring"
+                                            OffContent="Show FPS/Timing HUD"
+                                            OnContent="Show Selected Desktop Window"
+                                            Toggled="MirrorToggle_Toggled" />
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Target Window" Style="{StaticResource SettingLabelStyle}" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox
+                                                    x:Name="TargetWindowCombo"
+                                                    Grid.Column="0"
+                                                    HorizontalAlignment="Stretch"
+                                                    SelectionChanged="TargetWindow_SelectionChanged" />
+                                                <Button
+                                                    x:Name="RefreshWindowsButton"
+                                                    Grid.Column="1"
+                                                    Content="Refresh"
+                                                    Click="RefreshWindows_Click" />
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock x:Name="MirrorMaxWidthLabel" Text="Maximum Width: 1024px" Style="{StaticResource SettingLabelStyle}" />
+                                            <Slider
+                                                x:Name="MirrorMaxWidthSlider"
+                                                Minimum="256"
+                                                Maximum="2048"
+                                                StepFrequency="64"
+                                                TickFrequency="64"
+                                                HorizontalAlignment="Stretch"
+                                                ValueChanged="MirrorMaxWidth_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock x:Name="MirrorFpsLabel" Text="Capture Target: 30 FPS" Style="{StaticResource SettingLabelStyle}" />
+                                            <Slider
+                                                x:Name="MirrorFpsSlider"
+                                                Minimum="10"
+                                                Maximum="90"
+                                                StepFrequency="5"
+                                                TickFrequency="5"
+                                                HorizontalAlignment="Stretch"
+                                                ValueChanged="MirrorFps_ValueChanged" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border x:Name="MirrorPreviewCard" Grid.Column="1" VerticalAlignment="Top" Style="{StaticResource CardStyle}">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock Text="Preview" Style="{StaticResource CardTitleStyle}" />
+                                        <Border CornerRadius="10" Padding="10">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#FF253044" Offset="0" />
+                                                    <GradientStop Color="#FF11151C" Offset="0.5" />
+                                                    <GradientStop Color="#FF344054" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Image x:Name="PreviewImageMirror" Stretch="Uniform" HorizontalAlignment="Stretch" />
+                                        </Border>
+                                        <TextBlock
+                                            Text="The active OpenXR layer uses the selected window's dimensions and scales it down to the maximum width configured above."
                                             Style="{StaticResource MutedTextStyle}"
                                             FontSize="11" />
                                     </StackPanel>
