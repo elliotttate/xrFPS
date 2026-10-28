@@ -92,6 +92,22 @@ The app is WinUI 3 (.NET 9) and drives `xrfps_core.dll`, which exports the
 layer's own configuration, HUD renderer, installer and metrics collector — so
 the settings, the preview and the headset all run the same code.
 
+## Frame timing
+
+**Open frame timing** in the Control Center's Frame statistics card opens a
+full-window viewer for every frame of a running OpenXR app: live and recorded
+frame-time graphs, a distribution, the late frames with their likely cause, and
+a per-frame breakdown of the app's work, the runtime's pacing and submission,
+and GPU time. Captures save under `%LOCALAPPDATA%\xrFPS\captures`.
+
+The layer stamps each frame around `xrWaitFrame`, `xrBeginFrame` and
+`xrEndFrame` and publishes the timeline to `Local\xrFPS.FrameTimeline.<pid>`.
+Time spent inside the runtime's `xrBeginFrame` and `xrEndFrame` is counted as
+the runtime's, not the app's. GPU time comes from timestamp queries on the
+app's own queue (D3D11, D3D12, Vulkan and OpenGL); turn it off with the
+**GPU timing** box, or pin it with `XRFPS_GPU_TIMING=0/1`.
+`XRFPS_FRAME_TIMELINE=0` turns the timeline off for one app.
+
 ## Build
 
 ```powershell
@@ -105,6 +121,8 @@ Targets:
 - `XrApiLayer_xrfps` — the layer DLL + manifest.
 - `xrfps_core` — config, HUD renderer, installer and metrics behind a C ABI.
 - `app/` — the WinUI 3 Control Center (needs the .NET 9 SDK).
+- `xrfps_frametime` — the frame-timing viewer the Control Center opens
+  (`-DXRFPS_BUILD_FRAMETIME_VIEWER=OFF` skips it).
 - `xrfps_hudtest` — renders the HUD to a BMP for quick visual iteration,
   no headset required.
 - `xrfps_timing_probe` — manually verifies the SteamVR compositor reader and

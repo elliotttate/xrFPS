@@ -50,6 +50,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+    <None Include="..\build\Release\xrfps_frametime.exe" Condition="Exists('..\build\Release\xrfps_frametime.exe')">
+      <Link>xrfps_frametime.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
     <None Include="..\manifest\XrApiLayer_xrfps.json">
       <Link>XrApiLayer_xrfps.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -42,7 +42,7 @@ if ($OpenXrSdkPath -and (Test-Path -LiteralPath $OpenXrSdkPath)) {
 }
 & cmake @cmakeArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
-& cmake --build $buildDir --config Release --target XrApiLayer_xrfps xrfps_core | Out-Null
+& cmake --build $buildDir --config Release --target XrApiLayer_xrfps xrfps_core xrfps_frametime | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 
 Write-Host "[2/7] Publishing the Control Center"
@@ -73,7 +73,7 @@ foreach ($hostFile in @('hostfxr.dll', 'coreclr.dll')) {
 
 Write-Host "[3/7] Staging the payload"
 Copy-Item -Path (Join-Path $appPublish '*') -Destination $payloadRoot -Recurse -Force
-foreach ($file in @('XrApiLayer_xrfps.dll', 'xrfps_core.dll')) {
+foreach ($file in @('XrApiLayer_xrfps.dll', 'xrfps_core.dll', 'xrfps_frametime.exe')) {
     Copy-Item -LiteralPath (Join-Path $buildDir "Release\$file") -Destination $payloadRoot -Force
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'manifest\XrApiLayer_xrfps.json') -Destination $payloadRoot -Force

@@ -50,6 +50,7 @@ xrfps::Config from_abi(const XrFpsConfigAbi& in) {
     c.show_cpu_temp = in.show_cpu_temp != 0;
     c.show_gpu_clock = in.show_gpu_clock != 0;
     c.show_ram = in.show_ram != 0;
+    c.gpu_timing = in.gpu_timing != 0;
     return c;
 }
 
@@ -61,6 +62,7 @@ void to_abi(const xrfps::Config& c, XrFpsConfigAbi* out) {
     out->hide_delay_sec = c.hide_delay_sec;
     out->f10_toggle = c.f10_toggle;
     out->timing_source = c.timing_source;
+    out->gpu_timing = c.gpu_timing;
     out->controller_placement = c.controller_placement;
     out->fallback_placement = c.fallback_placement;
     out->panel_width_m = c.panel_width_m;

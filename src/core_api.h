@@ -53,6 +53,8 @@ typedef struct XrFpsConfigAbi {
     int32_t show_cpu_temp;
     int32_t show_gpu_clock;
     int32_t show_ram;
+
+    int32_t gpu_timing;
 } XrFpsConfigAbi;
 
 typedef struct XrFpsMetricsAbi {

@@ -43,6 +43,8 @@ public struct NativeConfig
     public int ShowCpuTemp;
     public int ShowGpuClock;
     public int ShowRam;
+
+    public int GpuTiming;
 }
 
 [StructLayout(LayoutKind.Sequential)]

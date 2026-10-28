@@ -236,6 +236,7 @@ public sealed partial class MainWindow : Window
         HideDelaySlider.Value = _config.HideDelaySec * 100.0;
         F10Check.IsChecked = _config.F10Toggle != 0;
         TimingSourceCombo.SelectedIndex = Math.Clamp(_config.TimingSource, 0, 3);
+        GpuTimingCheck.IsChecked = _config.GpuTiming != 0;
         ControllerPlacementCombo.SelectedIndex = Math.Clamp(_config.ControllerPlacement, 0, 10);
         FallbackPlacementCombo.SelectedIndex = Math.Clamp(_config.FallbackPlacement, 0, 7);
 
@@ -281,6 +282,7 @@ public sealed partial class MainWindow : Window
         _config.HideDelaySec = (float)(HideDelaySlider.Value / 100.0);
         _config.F10Toggle = F10Check.IsChecked == true ? 1 : 0;
         _config.TimingSource = TimingSourceCombo.SelectedIndex < 0 ? 0 : TimingSourceCombo.SelectedIndex;
+        _config.GpuTiming = GpuTimingCheck.IsChecked == true ? 1 : 0;
         _config.ControllerPlacement = ControllerPlacementCombo.SelectedIndex < 0
             ? 0
             : ControllerPlacementCombo.SelectedIndex;
@@ -584,6 +586,35 @@ public sealed partial class MainWindow : Window
         {
             ShowAction("Folder not found", "Install the layer first to create its local folder.",
                        InfoBarSeverity.Warning);
+        }
+    }
+
+    // The frame-time viewer ships beside the Control Center; a development
+    // build keeps it in the CMake output.
+    private void OpenFrameTiming_Click(object sender, RoutedEventArgs e)
+    {
+        string? viewer = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "xrfps_frametime.exe"),
+            Path.Combine(Path.GetDirectoryName(ManifestPathText.Text) ?? "", "xrfps_frametime.exe"),
+        }.FirstOrDefault(File.Exists);
+        if (viewer is null)
+        {
+            ShowAction("Frame timing not found", "xrfps_frametime.exe is missing beside the Control Center.",
+                       InfoBarSeverity.Warning);
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(viewer)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(viewer) ?? "",
+            });
+        }
+        catch (Exception ex)
+        {
+            ShowAction("Could not open frame timing", ex.Message, InfoBarSeverity.Error);
         }
     }
 

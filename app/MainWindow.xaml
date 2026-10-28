@@ -605,6 +605,20 @@
                                                 Style="{StaticResource MutedTextStyle}"
                                                 FontSize="12"
                                                 TextWrapping="Wrap" />
+                                            <StackPanel Orientation="Horizontal" Spacing="16">
+                                                <Button
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="Open frame timing"
+                                                    AutomationProperties.Name="Open the frame-time viewer"
+                                                    ToolTipService.ToolTip="Every frame of a running OpenXR app in its own window: hitches, late frames, CPU and GPU time, captures and comparisons."
+                                                    Click="OpenFrameTiming_Click" />
+                                                <CheckBox
+                                                    x:Name="GpuTimingCheck"
+                                                    Content="GPU timing"
+                                                    VerticalAlignment="Center"
+                                                    ToolTipService.ToolTip="Timestamps on the app's GPU queue around each frame, for the frame-time viewer's GPU times. Applies live."
+                                                    Click="Setting_Changed" />
+                                            </StackPanel>
                                             <Grid ColumnSpacing="24">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
