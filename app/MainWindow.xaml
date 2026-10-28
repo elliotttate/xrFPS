@@ -134,65 +134,95 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
-                                <Border x:Name="DashboardStatusCard" Grid.Column="0" Style="{StaticResource CardStyle}">
-                                    <StackPanel Spacing="16">
-                                        <StackPanel Orientation="Horizontal" Spacing="12">
-                                            <Ellipse
-                                                x:Name="StatusDot"
-                                                Width="10"
-                                                Height="10"
-                                                Fill="{ThemeResource MutedTextBrush}"
-                                                VerticalAlignment="Center" />
-                                            <TextBlock
-                                                x:Name="StatusHeadline"
-                                                Text="Checking installation"
-                                                Style="{StaticResource CardTitleStyle}" />
-                                        </StackPanel>
-                                        <TextBlock x:Name="StatusDetail" Style="{StaticResource MutedTextStyle}" FontSize="13" />
-
-                                        <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <Button
-                                                x:Name="InstallButton"
-                                                Style="{StaticResource PrimaryButtonStyle}"
-                                                Content="Install layer"
-                                                Click="Install_Click" />
-                                            <Button
-                                                x:Name="UninstallButton"
-                                                Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="Uninstall"
-                                                Click="Uninstall_Click" />
-                                            <Button
-                                                x:Name="ReinstallButton"
-                                                Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="Update files"
-                                                Click="Install_Click" />
-                                        </StackPanel>
-
-                                        <Border Height="1" Background="{ThemeResource CardStrokeBrush}" />
-
-                                        <Grid ColumnSpacing="16">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0">
-                                                <TextBlock Text="Overlay enabled" Style="{StaticResource SettingLabelStyle}" />
+                                <StackPanel Grid.Column="0" Spacing="18">
+                                    <Border x:Name="DashboardStatusCard" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="16">
+                                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                                <Ellipse
+                                                    x:Name="StatusDot"
+                                                    Width="10"
+                                                    Height="10"
+                                                    Fill="{ThemeResource MutedTextBrush}"
+                                                    VerticalAlignment="Center" />
                                                 <TextBlock
-                                                    Text="Applies instantly, even to a game already running."
-                                                    Style="{StaticResource MutedTextStyle}"
-                                                    FontSize="12" />
+                                                    x:Name="StatusHeadline"
+                                                    Text="Checking installation"
+                                                    Style="{StaticResource CardTitleStyle}" />
                                             </StackPanel>
-                                            <ToggleSwitch
-                                                x:Name="EnabledToggle"
-                                                Grid.Column="1"
-                                                AutomationProperties.Name="Overlay enabled"
-                                                HorizontalAlignment="Right"
-                                                OnContent="On"
-                                                OffContent="Off"
-                                                Toggled="Setting_Changed" />
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
+                                            <TextBlock x:Name="StatusDetail" Style="{StaticResource MutedTextStyle}" FontSize="13" />
+
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <Button
+                                                    x:Name="InstallButton"
+                                                    Style="{StaticResource PrimaryButtonStyle}"
+                                                    Content="Install layer"
+                                                    Click="Install_Click" />
+                                                <Button
+                                                    x:Name="UninstallButton"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="Uninstall"
+                                                    Click="Uninstall_Click" />
+                                                <Button
+                                                    x:Name="ReinstallButton"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="Update files"
+                                                    Click="Install_Click" />
+                                            </StackPanel>
+
+                                            <Border Height="1" Background="{ThemeResource CardStrokeBrush}" />
+
+                                            <Grid ColumnSpacing="16">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="Overlay enabled" Style="{StaticResource SettingLabelStyle}" />
+                                                    <TextBlock
+                                                        Text="Applies instantly, even to a game already running."
+                                                        Style="{StaticResource MutedTextStyle}"
+                                                        FontSize="12" />
+                                                </StackPanel>
+                                                <ToggleSwitch
+                                                    x:Name="EnabledToggle"
+                                                    Grid.Column="1"
+                                                    AutomationProperties.Name="Overlay enabled"
+                                                    HorizontalAlignment="Right"
+                                                    OnContent="On"
+                                                    OffContent="Off"
+                                                    Toggled="Setting_Changed" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border x:Name="DashboardFrameTimingCard" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="14">
+                                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                                <FontIcon
+                                                    Glyph="&#xE9D9;"
+                                                    FontSize="20"
+                                                    Foreground="{ThemeResource BrandBrush}"
+                                                    VerticalAlignment="Center" />
+                                                <TextBlock Text="Frame timing" Style="{StaticResource CardTitleStyle}" />
+                                            </StackPanel>
+                                            <TextBlock
+                                                Style="{StaticResource MutedTextStyle}"
+                                                FontSize="13"
+                                                TextWrapping="Wrap"
+                                                Text="Every frame of a running VR game in its own window: frame times, hitches and what caused them, and GPU time." />
+                                            <Button
+                                                x:Name="DashboardFrameTimingButton"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                AutomationProperties.Name="Open frame timing"
+                                                Click="OpenFrameTiming_Click">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <FontIcon Glyph="&#xE8A7;" FontSize="14" />
+                                                    <TextBlock Text="Open frame timing" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
 
                                 <Border
                                     x:Name="DashboardPreviewCard"

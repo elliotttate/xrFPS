@@ -94,8 +94,8 @@ the settings, the preview and the headset all run the same code.
 
 ## Frame timing
 
-**Open frame timing** in the Control Center's Frame statistics card opens a
-full-window viewer for every frame of a running OpenXR app: live and recorded
+**Open frame timing** on the Control Center's Dashboard opens a full-window
+viewer for every frame of a running OpenXR app: live and recorded
 frame-time graphs, a distribution, the late frames with their likely cause, and
 a per-frame breakdown of the app's work, the runtime's pacing and submission,
 and GPU time. Captures save under `%LOCALAPPDATA%\xrFPS\captures`.
