@@ -781,6 +781,51 @@ void poll_timing_source(Session* s, double now) {
     }
 }
 
+const char* space_name(const Session* s, XrSpace space) {
+    return space == s->ref_space ? "LOCAL" : space == s->view_space ? "VIEW" : "other";
+}
+
+// A HUD the layer believes it showed but nobody saw is otherwise invisible in
+// the log, so record each change in what reached the runtime: where the quad
+// went (with the head, to spot a panel placed out of view), why a wanted HUD
+// was left out, and an xrEndFrame the quad made fail.
+void log_hud_state(Session* s, bool show, const char* skip_reason, bool added,
+                   const XrFrameEndInfo* info, XrResult result) {
+    if (added && XR_FAILED(result)) {
+        if (!s->hud_end_frame_error_logged) {
+            s->hud_end_frame_error_logged = true;
+            flog("hud: xrEndFrame returned %d with the HUD quad added (%u app layers)", result,
+                 info->layerCount);
+        }
+    } else if (added && !s->hud_on_screen) {
+        XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
+        const bool head_known =
+            XR_SUCCEEDED(s->fns->locateSpace(s->view_space, s->ref_space, info->displayTime, &head)) &&
+            (head.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+        const XrVector3f& p = s->quad.pose.position;
+        if (head_known) {
+            const XrVector3f& h = head.pose.position;
+            flog("hud: submitted in %s at (%.2f, %.2f, %.2f), head at (%.2f, %.2f, %.2f), %u app layers",
+                 space_name(s, s->quad.space), p.x, p.y, p.z, h.x, h.y, h.z, info->layerCount);
+        } else {
+            flog("hud: submitted in %s at (%.2f, %.2f, %.2f), %u app layers",
+                 space_name(s, s->quad.space), p.x, p.y, p.z, info->layerCount);
+        }
+    }
+    // A failed frame keeps the state, so a runtime refusing every other frame
+    // cannot turn this into a per-frame log line.
+    if (!added) {
+        s->hud_on_screen = false;
+    } else if (XR_SUCCEEDED(result)) {
+        s->hud_on_screen = true;
+    }
+
+    if (skip_reason != nullptr && skip_reason != s->hud_skip_reason) {
+        flog("hud: wanted but not submitted: %s", skip_reason);
+    }
+    s->hud_skip_reason = show ? skip_reason : nullptr;
+}
+
 } // namespace
 
 Session* session_create(XrInstance instance, XrSession session, const XrSessionCreateInfo* create_info,
@@ -925,8 +970,20 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     // be visible, including persistent fallback/headset/follow modes.
     const bool placed_show = s->anchor_valid;
     const bool show = s->config.enabled && (placed_show || s->force_show);
-    if (show && s->gfx != Gfx::None && frame_end_info->layerCount + 1 <= s->max_layers &&
-        ensure_swapchain(s) && update_content(s)) {
+    const char* skip_reason = nullptr;
+    if (show) {
+        if (s->gfx == Gfx::None) {
+            skip_reason = "unsupported graphics API";
+        } else if (frame_end_info->layerCount + 1 > s->max_layers) {
+            skip_reason = "no free composition layer";
+        } else if (!ensure_swapchain(s)) {
+            skip_reason = "no HUD swapchain";
+        } else if (!update_content(s)) {
+            skip_reason = "HUD upload failed";
+        }
+    }
+    const bool add_hud = show && skip_reason == nullptr;
+    if (add_hud) {
         s->quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
         s->quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
                              XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
@@ -982,6 +1039,7 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     s->hud_refreshed_this_frame = false;
     s->session_info.publish_timing(s->stats.source, s->config.timing_source, s->stats,
                                    timing_source_name(s));
+    log_hud_state(s, show, skip_reason, add_hud, frame_end_info, result);
     return result;
 }
 

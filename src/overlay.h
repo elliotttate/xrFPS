@@ -143,6 +143,12 @@ struct Session {
     bool controller_availability_known{false};
     bool fallback_active{false};
 
+    // What the HUD last did, so the log records each change once: reached the
+    // runtime, was wanted but left out (and why), or made xrEndFrame fail.
+    bool hud_on_screen{false};
+    const char* hud_skip_reason{nullptr};
+    bool hud_end_frame_error_logged{false};
+
     // Floating placements use a softly lagging headset pose so
     // the panel follows the user without being glued to every head tremor.
     bool follow_valid{false};
