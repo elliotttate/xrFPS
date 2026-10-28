@@ -196,6 +196,8 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrWaitFrame(XrSession session, const XrFrame
             xrfps::session_note_display_period(s, frame_state->predictedDisplayPeriod);
         }
         xrfps::frame_timing::wait_exit(s, wait, *frame_state);
+    } else {
+        xrfps::frame_timing::wait_failed();
     }
     return r;
 }
@@ -229,7 +231,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrEndFrame(XrSession session, const XrFrameE
     perf::timeline::FrameRecord frame;
     xrfps::frame_timing::end_enter(s, frame, *frame_end_info);
     const XrResult r = xrfps::session_end_frame(s, frame_end_info);
-    xrfps::frame_timing::end_exit(s, frame, *frame_end_info, s->submit_qpc);
+    xrfps::frame_timing::end_exit(s, frame, *frame_end_info, r);
     return r;
 }
 
@@ -256,7 +258,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroyInstance(XrInstance instance) {
     {
         std::lock_guard<std::mutex> lock(g.mtx);
         for (auto& [handle, s] : g.sessions) {
-            xrfps::frame_timing::session_destroyed(s);
+            xrfps::frame_timing::session_destroyed(s, true);
             xrfps::session_destroy(s);
         }
         g.sessions.clear();

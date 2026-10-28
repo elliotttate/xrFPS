@@ -930,6 +930,7 @@ void session_note_display_period(Session* s, XrDuration period_ns) {
     const int nth = s->period_count / 10;
     std::nth_element(sorted, sorted + nth, sorted + s->period_count);
     const float floor_ms = sorted[nth];
+    s->period_floor_ms = floor_ms;
 
     // Hysteresis keeps the HUD's colors and graph scale from flickering.
     if (s->stats.target_ms <= 0.5f ||
@@ -1019,6 +1020,9 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     QueryPerformanceCounter(&submit);
     s->submit_qpc = uint64_t(submit.QuadPart);
     const XrResult result = s->fns->endFrame(s->session, submit_info);
+    LARGE_INTEGER returned{};
+    QueryPerformanceCounter(&returned);
+    s->end_return_qpc = uint64_t(returned.QuadPart);
     const double completed = qpc_ms();
     if (XR_SUCCEEDED(result)) {
         // This interval spans update_content above, so drop it whenever the HUD

@@ -84,7 +84,9 @@ add_library(XrApiLayer_xrfps SHARED
 )
 target_include_directories(XrApiLayer_xrfps PRIVATE
     "${XRFPS_OPENXR_INCLUDE}" "${XRFPS_OPENVR_INCLUDE}" "${XRFPS_VULKAN_INCLUDE}")
-target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi gdiplus opengl32)
+target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi gdiplus opengl32 delayimp)
+# Only OpenGL apps' GPU timing calls into opengl32; keep it out of every other game.
+target_link_options(XrApiLayer_xrfps PRIVATE "/DELAYLOAD:opengl32.dll")
 target_compile_definitions(XrApiLayer_xrfps PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN XRFPS_VERSION="${PROJECT_VERSION}")
 
 # The manifest travels next to the DLL; library_path is relative.

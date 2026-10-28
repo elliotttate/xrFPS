@@ -151,16 +151,21 @@ public:
     bool Calibrated() const { return m_calibration.valid; }
     uint32_t TimestampBits() const { return m_mask == ~0ull ? 64 : uint32_t(__popcnt64(m_mask)); }
 
-    // Waits up to half a second for submitted timestamps; whatever is still in
-    // flight then is leaked rather than freed under the GPU.
+    // Waits up to half a second for everything this timer put on the queue;
+    // whatever is still in flight then is leaked rather than freed under the GPU.
     void Shutdown() {
         if (!m_device) return;
-        std::vector<VkFence> pending;
-        for (int slot = 0; slot < int(kSlots); ++slot) {
-            if (m_fences[slot] && m_slots[slot].state == SlotRing::State::Pending) pending.push_back(m_fences[slot]);
+        bool idle = true;
+        if (m_queue && m_slots.Busy()) {
+            // An empty submit signals once all work ahead of it has run, begin
+            // stamps included: they carry no fence of their own.
+            VkFence last = VK_NULL_HANDLE;
+            VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            idle = m_createFence(m_device, &fi, nullptr, &last) == VK_SUCCESS &&
+                   m_queueSubmit(m_queue, 0, nullptr, last) == VK_SUCCESS &&
+                   m_waitForFences(m_device, 1, &last, VK_TRUE, 500000000ull) == VK_SUCCESS;
+            if (idle) m_destroyFence(m_device, last, nullptr);
         }
-        bool idle = pending.empty() ||
-                    m_waitForFences(m_device, uint32_t(pending.size()), pending.data(), VK_TRUE, 500000000ull) == VK_SUCCESS;
         if (idle) {
             for (VkFence& fence : m_fences) {
                 if (fence) m_destroyFence(m_device, fence, nullptr);
@@ -168,6 +173,12 @@ public:
             if (m_commandPool) m_destroyCommandPool(m_device, m_commandPool, nullptr);
             if (m_pool) m_destroyQueryPool(m_device, m_pool, nullptr);
         }
+        Abandon();
+    }
+
+    // Forgets every handle without touching the device: for teardown where
+    // the app may already have destroyed it.
+    void Abandon() {
         for (VkFence& fence : m_fences) fence = VK_NULL_HANDLE;
         m_commandPool = VK_NULL_HANDLE;
         m_pool = VK_NULL_HANDLE;
@@ -175,6 +186,7 @@ public:
         m_device = VK_NULL_HANDLE;
         m_calibration = Calibration{};
         m_qpcDomain = false;
+        m_slots = SlotRing{};
     }
 
     // xrBeginFrame, after the runtime's own: ahead of the app's frame on its queue.

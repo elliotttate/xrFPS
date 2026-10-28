@@ -499,6 +499,26 @@ void RuntimeWaitsInBeginFrameAreNotTheApps() {
     }
 }
 
+void OverlappingWaitsCountOnce() {
+    // Pipelined on a real runtime: the game thread sits in xrWaitFrame while
+    // the runtime still holds the render thread in xrBeginFrame. The app was
+    // blocked for the union of the two, not their sum.
+    SingleThreadApp app;
+    for (int i = 0; i < 30; ++i) app.Frame(14.0, 0.4);
+    for (FrameRecord& r : app.out) {
+        r.beginExitQpc = r.beginQpc + Ticks(6.0);
+        r.waitThreadId = 8;
+        r.waitEnterQpc = r.waitPaceQpc = r.beginQpc + Ticks(2.0);
+        r.waitExitQpc = r.beginQpc + Ticks(5.0);
+        r.waitTargetQpc = 0;
+    }
+    Analyzer a = Make(app.out);
+    for (size_t i = 2; i < a.Size(); ++i) {
+        const FrameMetrics& m = a.Metrics()[i];
+        assert(Near(m.blockedMs, 6.0, 0.01) && Near(m.costMs, 8.2, 0.01));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -517,6 +537,7 @@ int main() {
     GpuResultsAheadOfTheirFrameAreKept();
     LongStallsCountEveryMissedRefresh();
     RuntimeWaitsInBeginFrameAreNotTheApps();
+    OverlappingWaitsCountOnce();
     std::cout << "frame analysis tests passed\n";
     return 0;
 }

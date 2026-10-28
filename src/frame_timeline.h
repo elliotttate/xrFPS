@@ -313,6 +313,17 @@ public:
     const MarkerRecord* Markers() const { return m_markers; }
     const GpuRecord* Gpu() const { return m_gpu; }
 
+    // The highest frame id already in the rings. A writer that rejoins after a
+    // DLL reload numbers on from here, so a GPU result can never be matched to
+    // an older frame that had the same id.
+    uint64_t LastFrameId() const {
+        const uint64_t frames = m_header->frameCount.load(std::memory_order_acquire);
+        const uint64_t gpu = m_header->gpuCount.load(std::memory_order_acquire);
+        const uint64_t lastFrame = frames ? m_frames[(frames - 1) % m_header->frameCapacity].frameId : 0;
+        const uint64_t lastGpu = gpu ? m_gpu[(gpu - 1) % m_header->gpuCapacity].frameId : 0;
+        return lastFrame > lastGpu ? lastFrame : lastGpu;
+    }
+
     // One writer at a time: the runtime publishes only from inside xrEndFrame,
     // whose reentrancy guard already serializes callers.
     void PublishFrame(const FrameRecord& record) {
@@ -592,6 +603,10 @@ public:
         m_joiner.OnWait(wait);
         m_timeline.Header()->waitActiveSinceQpc.store(0, std::memory_order_relaxed);
     }
+    // A layer's xrWaitFrame that failed: no frame state, but no longer waiting.
+    void WaitAbandoned() {
+        if (Enabled()) m_timeline.Header()->waitActiveSinceQpc.store(0, std::memory_order_relaxed);
+    }
 
     void Begin() {
         if (Enabled()) m_joiner.OnBegin(Qpc());
@@ -648,6 +663,12 @@ public:
         TimelineHeader& header = *m_timeline.Header();
         header.endActiveSinceQpc.store(0, std::memory_order_relaxed);
         if ((frame.frameId & 255) == 0) Calibrate(header, exitQpc);
+    }
+
+    // A layer's xrEndFrame the runtime refused: nothing was shown, so nothing
+    // is published, but the call is over.
+    void EndAbandoned() {
+        if (Enabled()) m_timeline.Header()->endActiveSinceQpc.store(0, std::memory_order_relaxed);
     }
 
     void Gpu(const GpuRecord& record) {

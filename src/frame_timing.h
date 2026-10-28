@@ -28,8 +28,9 @@ void instance_created(XrInstance instance, PFN_xrGetInstanceProcAddr next_gipa, 
 void instance_destroyed();
 
 // Session: after the runtime created it / before it is destroyed.
+// `device_may_be_gone`: torn down with the instance, not by xrDestroySession.
 void session_created(Session* s, XrInstance instance, const XrSessionCreateInfo* create_info);
-void session_destroyed(Session* s);
+void session_destroyed(Session* s, bool device_may_be_gone = false);
 
 void session_state_changed(XrSessionState state);
 void swapchain_created(const XrSwapchainCreateInfo& info);
@@ -38,11 +39,13 @@ void settings_changed();
 // Frame calls, around the downchain call.
 void wait_enter(perf::timeline::WaitSample& wait);
 void wait_exit(Session* s, perf::timeline::WaitSample& wait, const XrFrameState& state);
+void wait_failed();
 void begin_enter();
 void begin_exit(Session* s, bool succeeded);
 void locate(XrTime display_time);
 void end_enter(Session* s, perf::timeline::FrameRecord& frame, const XrFrameEndInfo& info);
-void end_exit(Session* s, perf::timeline::FrameRecord& frame, const XrFrameEndInfo& info, uint64_t submit_qpc);
+// Reads s->submit_qpc and s->end_return_qpc, which session_end_frame stamps.
+void end_exit(Session* s, perf::timeline::FrameRecord& frame, const XrFrameEndInfo& info, XrResult result);
 
 // xrCreateVulkanDeviceKHR (XR_KHR_vulkan_enable2): asks for calibrated
 // timestamps so Vulkan GPU times land on the CPU clock.

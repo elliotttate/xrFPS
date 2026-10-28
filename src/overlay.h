@@ -128,6 +128,7 @@ struct Session {
     float period_window_ms[kPeriodWindow]{};
     int period_index{0};
     int period_count{0};
+    float period_floor_ms{0.0f};  // the latest reading, before the HUD's hysteresis
 
     // Gesture state.
     bool visible{false};
@@ -171,10 +172,11 @@ struct Session {
     MetricsReader metrics{};
     SessionPublisher session_info{};
 
-    // Frame timeline: GPU timers for this session, and when xrEndFrame handed
-    // the frame to the runtime (after xrFPS's own HUD work).
+    // Frame timeline: GPU timers for this session, when xrEndFrame handed the
+    // frame to the runtime (after xrFPS's own HUD work), and when it returned.
     SessionTiming* timing{};
     uint64_t submit_qpc{0};
+    uint64_t end_return_qpc{0};
 
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};

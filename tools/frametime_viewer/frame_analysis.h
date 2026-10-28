@@ -454,19 +454,31 @@ private:
             m.intervalMs = float(Ms(r.endEnterQpc - p.endEnterQpc));
             // Time between `from` and `to` that the app sat blocked by pacing.
             auto blockedIn = [&](uint64_t from, uint64_t to) {
-                double ms = 0.0;
+                std::pair<uint64_t, uint64_t> spans[10];
+                size_t count = 0;
+                const auto add = [&](uint64_t a, uint64_t b) {
+                    a = std::max(a, from);
+                    b = std::min(b, to);
+                    if (b > a) spans[count++] = {a, b};
+                };
                 const size_t last = std::min(m_records.size(), i + 3);
                 for (size_t j = i >= 2 ? i - 2 : 0; j < last; ++j) {
                     const FrameRecord& w = m_records[j];
                     if (!(w.flags & timeline::kFrameWaitMatched) || !w.waitPaceQpc || w.waitExitQpc < w.waitPaceQpc) continue;
-                    const uint64_t a = std::max(w.waitPaceQpc, from);
-                    const uint64_t b = std::min(w.waitExitQpc, to);
-                    if (b > a) ms += Ms(b - a);
+                    add(w.waitPaceQpc, w.waitExitQpc);
                     // A real runtime can also hold xrBeginFrame until its pipeline has room.
-                    if (w.beginExitQpc > w.beginQpc && w.beginQpc) {
-                        const uint64_t c = std::max(w.beginQpc, from);
-                        const uint64_t d = std::min(w.beginExitQpc, to);
-                        if (d > c) ms += Ms(d - c);
+                    if (w.beginExitQpc > w.beginQpc && w.beginQpc) add(w.beginQpc, w.beginExitQpc);
+                }
+                // A pipelined engine waits for its next frame while the runtime still
+                // holds this one in xrBeginFrame: count overlapping time once.
+                std::sort(spans, spans + count);
+                double ms = 0.0;
+                uint64_t reached = from;
+                for (size_t k = 0; k < count; ++k) {
+                    const uint64_t a = std::max(spans[k].first, reached);
+                    if (spans[k].second > a) {
+                        ms += Ms(spans[k].second - a);
+                        reached = spans[k].second;
                     }
                 }
                 return ms;

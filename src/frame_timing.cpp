@@ -102,13 +102,16 @@ bool timeline_wanted() {
 }
 
 // The Control Center's setting, unless XRFPS_GPU_TIMING pins it.
-bool gpu_timing_wanted(const Session* s) {
+bool gpu_timing_setting(bool configured) {
     static const int forced = [] {
         int value = 0;
         return env_flag("XRFPS_GPU_TIMING", value) ? value : -1;
     }();
-    const bool on = forced >= 0 ? forced != 0 : s->config.gpu_timing;
-    return on && g_recorder.Enabled();
+    return forced >= 0 ? forced != 0 : configured;
+}
+
+bool gpu_timing_wanted(const Session* s) {
+    return gpu_timing_setting(s->config.gpu_timing) && g_recorder.Enabled();
 }
 
 std::string json_text(const std::string& text) {
@@ -254,7 +257,12 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_create_vulkan_device(XrInstance instance,
                                                          const XrVulkanDeviceCreateInfoKHR* create_info,
                                                          VkDevice* device, VkResult* vk_result) {
     if (!g_next_create_vulkan_device) return XR_ERROR_FUNCTION_UNSUPPORTED;
-    if (!create_info || !create_info->vulkanCreateInfo || !g_recorder.Enabled()) {
+    // No session exists yet, so read the setting itself. With GPU timing off,
+    // xrFPS leaves the app's device exactly as the app asked for it.
+    Config config;
+    config.load();
+    if (!create_info || !create_info->vulkanCreateInfo || !g_recorder.Enabled() ||
+        !gpu_timing_setting(config.gpu_timing)) {
         return g_next_create_vulkan_device(instance, create_info, device, vk_result);
     }
     const VkDeviceCreateInfo& app = *create_info->vulkanCreateInfo;
@@ -313,6 +321,10 @@ void instance_created(XrInstance instance, PFN_xrGetInstanceProcAddr next_gipa, 
     if (timeline_wanted() && !g_recorder.Enabled()) {
         if (g_recorder.Open(0.0)) {
             flog("frame timeline: Local\\xrFPS.FrameTimeline.%lu", GetCurrentProcessId());
+            // The loader unloads layers with their instance; a viewer holding
+            // the mapping open keeps the frames from before, so carry on their ids.
+            const uint64_t last = g_recorder.Ring().LastFrameId();
+            if (last > g_frame_count.load()) g_frame_count = last;
         } else {
             flog("frame timeline unavailable (error %lu)", GetLastError());
         }
@@ -401,8 +413,11 @@ void session_created(Session* s, XrInstance instance, const XrSessionCreateInfo*
     if (gpu_timing_wanted(s)) start_timer(*t);
 }
 
-void session_destroyed(Session* s) {
+void session_destroyed(Session* s, bool device_may_be_gone) {
     if (!s || !s->timing) return;
+    // D3D devices are held by reference; a Vulkan device is not, and an app
+    // that skips xrDestroySession may destroy it before its instance.
+    if (device_may_be_gone) s->timing->vulkan.Abandon();
     stop_timer(*s->timing);
     delete s->timing;
     s->timing = nullptr;
@@ -419,8 +434,11 @@ void swapchain_created(const XrSwapchainCreateInfo& info) {
     snprintf(detail, sizeof(detail), "format=%lld samples=%u array=%u", (long long)info.format, info.sampleCount,
              info.arraySize);
     g_recorder.Marker(tl::MarkerKind::SwapchainCreate, info.width, info.height, detail);
-    if (info.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
-        std::lock_guard<std::mutex> lock(g_info_mutex);
+    if (!(info.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)) return;
+    // The eye buffers: the largest colour swapchain, not whichever came last
+    // (often a small UI quad's).
+    std::lock_guard<std::mutex> lock(g_info_mutex);
+    if (uint64_t(info.width) * info.height >= uint64_t(g_app_swapchain.width) * g_app_swapchain.height) {
         g_app_swapchain = info;
         g_app_swapchain.next = nullptr;
         g_info_dirty = true;
@@ -440,16 +458,19 @@ void wait_enter(tl::WaitSample& wait) {
 
 void wait_exit(Session* s, tl::WaitSample& wait, const XrFrameState& state) {
     g_recorder.WaitExit(wait, 0, tl::Qpc(), state.predictedDisplayTime, state.predictedDisplayPeriod, false);
-    if (!s || !s->timing || s->stats.target_ms <= 0.5f) return;
+    if (!s || !s->timing || s->period_floor_ms <= 0.5f) return;
     // The panel's rate, from the short end of recent display periods (see
     // session_note_display_period): half-rate pacing hints must not halve it.
-    const double hz = 1000.0 / double(s->stats.target_ms);
+    // The unsmoothed reading: the HUD's target holds still within 5%.
+    const double hz = 1000.0 / double(s->period_floor_ms);
     if (std::abs(hz - s->timing->refresh_hz) > s->timing->refresh_hz * 0.005) {
         s->timing->refresh_hz = hz;
         g_recorder.SetRefreshHz(hz);
         g_info_dirty = true;
     }
 }
+
+void wait_failed() { g_recorder.WaitAbandoned(); }
 
 void begin_enter() { g_recorder.Begin(); }
 
@@ -487,26 +508,49 @@ void end_enter(Session* s, tl::FrameRecord& frame, const XrFrameEndInfo& info) {
     frame = tl::FrameRecord{};
     g_recorder.EndEnter(frame, tl::Qpc());
     frame.frameId = ++g_frame_count;
-    if (!g_recorder.Enabled() || !s || !s->timing || !s->timing->frame_timed) return;
-    // Behind the app's frame on its queue, ahead of the HUD upload.
-    SessionTiming& t = *s->timing;
-    switch (t.api) {
-        case GpuApiKind::D3D12: if (t.d3d12.Active()) t.d3d12.End(frame.frameId); break;
-        case GpuApiKind::Vulkan: t.vulkan.End(frame.frameId); break;
-        case GpuApiKind::D3D11:
-            if (t.d3d11.Active()) {
-                t.d3d11_frame_thread = GetCurrentThreadId();
-                t.d3d11.End(frame.frameId);
+    if (!g_recorder.Enabled()) return;
+    if (s && s->timing) {
+        SessionTiming& t = *s->timing;
+        if (t.frame_timed) {
+            // Behind the app's frame on its queue, ahead of the HUD upload.
+            switch (t.api) {
+                case GpuApiKind::D3D12: if (t.d3d12.Active()) t.d3d12.End(frame.frameId); break;
+                case GpuApiKind::Vulkan: t.vulkan.End(frame.frameId); break;
+                case GpuApiKind::D3D11:
+                    if (t.d3d11.Active()) {
+                        t.d3d11_frame_thread = GetCurrentThreadId();
+                        t.d3d11.End(frame.frameId);
+                    }
+                    break;
+                case GpuApiKind::OpenGL: if (t.gl.Active() && gl_current(t)) t.gl.End(frame.frameId); break;
+                default: break;
             }
-            break;
-        case GpuApiKind::OpenGL: if (t.gl.Active() && gl_current(t)) t.gl.End(frame.frameId); break;
-        default: break;
+        }
+        // Earlier frames' results. Gathered here, before the runtime's
+        // submission, so the time shows as xrFPS's rather than the runtime's.
+        static std::vector<tl::GpuRecord> results;
+        results.clear();
+        switch (t.api) {
+            case GpuApiKind::D3D12: if (t.d3d12.Active()) t.d3d12.Collect(results); break;
+            case GpuApiKind::D3D11: if (t.d3d11.Active()) t.d3d11.Collect(results); break;
+            case GpuApiKind::Vulkan: t.vulkan.Collect(results); break;
+            case GpuApiKind::OpenGL: if (t.gl.Active() && gl_current(t)) t.gl.Collect(results); break;
+            default: break;
+        }
+        for (const tl::GpuRecord& r : results) g_recorder.Gpu(r);
+        set_gpu_timing_text(t.frame_timed ? t.timer_text : "off");
     }
+    if (g_info_dirty.exchange(false)) publish_session_info();
 }
 
-void end_exit(Session* s, tl::FrameRecord& frame, const XrFrameEndInfo& info, uint64_t submit_qpc) {
+void end_exit(Session* s, tl::FrameRecord& frame, const XrFrameEndInfo& info, XrResult result) {
     if (!g_recorder.Enabled()) return;
-    frame.endPaintQpc = submit_qpc;  // xrFPS's own work done; the runtime's submission follows
+    // A frame the runtime refused was never shown.
+    if (XR_FAILED(result) || !s) {
+        g_recorder.EndAbandoned();
+        return;
+    }
+    frame.endPaintQpc = s->submit_qpc;  // xrFPS's own work done; the runtime's submission follows
     frame.layerCount = info.layerCount;
     uint32_t projection = 0, quad = 0, cylinder = 0, other = 0;
     bool stereo = false;
@@ -533,23 +577,8 @@ void end_exit(Session* s, tl::FrameRecord& frame, const XrFrameEndInfo& info, ui
     if (projection == 0) flags |= tl::kFrameNoProjection;
     if (g_session_state.load() == XR_SESSION_STATE_FOCUSED) flags |= tl::kFrameSessionFocused;
     frame.flags = flags;
-
-    if (s && s->timing) {
-        static std::vector<tl::GpuRecord> results;
-        results.clear();
-        SessionTiming& t = *s->timing;
-        switch (t.api) {
-            case GpuApiKind::D3D12: if (t.d3d12.Active()) t.d3d12.Collect(results); break;
-            case GpuApiKind::D3D11: if (t.d3d11.Active()) t.d3d11.Collect(results); break;
-            case GpuApiKind::Vulkan: t.vulkan.Collect(results); break;
-            case GpuApiKind::OpenGL: if (t.gl.Active() && gl_current(t)) t.gl.Collect(results); break;
-            default: break;
-        }
-        for (const tl::GpuRecord& r : results) g_recorder.Gpu(r);
-        set_gpu_timing_text(t.frame_timed ? t.timer_text : "off");
-    }
-    if (g_info_dirty.exchange(false)) publish_session_info();
-    g_recorder.EndExit(frame, info.displayTime, tl::Qpc());
+    // When the runtime's call returned, not now: what xrFPS does after it is not the runtime's.
+    g_recorder.EndExit(frame, info.displayTime, s->end_return_qpc);
 }
 
 PFN_xrVoidFunction vulkan_device_hook() {

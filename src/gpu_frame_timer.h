@@ -73,6 +73,13 @@ public:
     }
 
     void Free(int slot) { m_slots[size_t(slot)] = Slot{}; }
+    // Anything submitted that has not been collected, begin-only frames included.
+    bool Busy() const {
+        for (const Slot& s : m_slots) {
+            if (s.state != State::Free) return true;
+        }
+        return false;
+    }
     const Slot& operator[](int slot) const { return m_slots[size_t(slot)]; }
 
 private:
@@ -212,6 +219,9 @@ public:
     // still in flight after that is leaked rather than released under the GPU.
     void Shutdown(bool wait = true) {
         std::lock_guard<std::mutex> lock(m_mutex);
+        // A begin stamp carries no fence of its own; one more signal covers a
+        // frame that began but never ended.
+        if (m_queue && m_fence && m_slots.Busy()) m_queue->Signal(m_fence.Get(), ++m_fenceValue);
         bool inFlight = m_queue && m_fence && m_fence->GetCompletedValue() < m_fenceValue;
         if (inFlight && wait) {
             HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);

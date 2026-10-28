@@ -327,6 +327,25 @@ void RecorderPublishesThroughTheMapping() {
     ReadRing(header->frameCount, frames, header->frameCapacity, 1, read);
     assert(read.size() == 1 && read[0].flags == 0 && read[0].waitEnterQpc == 0 && read[0].beginExitQpc == 0);
 
+    // A layer whose runtime call failed: the call is over, and nothing was shown.
+    WaitSample failed;
+    recorder.WaitEnter(failed);
+    recorder.WaitAbandoned();
+    assert(header->waitActiveSinceQpc == 0);
+    FrameRecord refused{};
+    refused.frameId = 3;
+    recorder.EndEnter(refused, Qpc());
+    recorder.EndAbandoned();
+    assert(header->endActiveSinceQpc == 0 && header->frameCount == 2);
+
+    // A writer that rejoins after a DLL reload numbers on past every id in use,
+    // a GPU result's included.
+    assert(recorder.Ring().LastFrameId() == 2);
+    GpuRecord gpu{};
+    gpu.frameId = 4;
+    recorder.Gpu(gpu);
+    assert(recorder.Ring().LastFrameId() == 4);
+
     // Session info: what the frames ran on, readable whole or not at all.
     assert(ReadSessionInfo(*header) == "{}");
     recorder.SetSessionInfo("{\"gpu\": {\"name\": \"Test GPU\"}}");
