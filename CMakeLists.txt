@@ -128,6 +128,15 @@ if(BUILD_TESTING)
     target_link_libraries(xrfps_gpu_frame_timer_test PRIVATE d3d12 d3d11 dxgi)
     add_test(NAME xrfps_gpu_frame_timer COMMAND xrfps_gpu_frame_timer_test)
     set_tests_properties(xrfps_gpu_frame_timer PROPERTIES TIMEOUT 60)
+    add_executable(xrfps_frame_analysis_test test/frame_analysis_tests.cpp)
+    target_include_directories(xrfps_frame_analysis_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/tools/frametime_viewer")
+    add_test(NAME xrfps_frame_analysis COMMAND xrfps_frame_analysis_test)
+    add_executable(xrfps_capture_test test/capture_tests.cpp)
+    target_include_directories(xrfps_capture_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/tools/frametime_viewer")
+    target_compile_definitions(xrfps_capture_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+    add_test(NAME xrfps_capture COMMAND xrfps_capture_test)
 
     # Manual runtime probe used by support/development. It is intentionally not
     # a CTest because SteamVR need not be installed on build machines.
@@ -150,6 +159,50 @@ target_link_libraries(xrfps_core PRIVATE gdiplus)
 target_compile_definitions(xrfps_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 # The app is .NET, which always uses the dynamic CRT.
 set_property(TARGET xrfps_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
+# Frame-time viewer: a separate process that reads an app's frame timeline
+# (src/frame_timeline.h) out of shared memory - the layer's on a real
+# runtime, or the OpenXR Simulator runtime's. Fetches Dear ImGui and ImPlot
+# (under their own name: the legacy Control Center below pins an older ImGui).
+option(XRFPS_BUILD_FRAMETIME_VIEWER "Build xrfps_frametime.exe" ON)
+if(XRFPS_BUILD_FRAMETIME_VIEWER)
+    include(FetchContent)
+    FetchContent_Declare(viewer_imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.92.9b GIT_SHALLOW TRUE)
+    FetchContent_Declare(viewer_implot GIT_REPOSITORY https://github.com/epezent/implot.git GIT_TAG v1.0 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(viewer_imgui viewer_implot)
+    add_executable(xrfps_frametime WIN32
+        tools/frametime_viewer/main.cpp
+        tools/frametime_viewer/viewer_app.cpp
+        tools/frametime_viewer/viewer_app.h
+        tools/frametime_viewer/ui_kit.cpp
+        tools/frametime_viewer/ui_kit.h
+        tools/frametime_viewer/frame_analysis.h
+        tools/frametime_viewer/timeline_client.h
+        tools/frametime_viewer/capture_file.h
+        tools/frametime_viewer/capture_report.h
+        tools/frametime_viewer/capture_session.h
+        tools/frametime_viewer/headless.cpp
+        tools/frametime_viewer/headless.h
+        tools/frametime_viewer/json.h
+        src/frame_timeline.h
+        ${viewer_imgui_SOURCE_DIR}/imgui.cpp
+        ${viewer_imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${viewer_imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${viewer_imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${viewer_imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${viewer_imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+        ${viewer_implot_SOURCE_DIR}/implot.cpp
+        ${viewer_implot_SOURCE_DIR}/implot_items.cpp
+    )
+    target_include_directories(xrfps_frametime BEFORE PRIVATE
+        "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/tools/frametime_viewer"
+        "${viewer_imgui_SOURCE_DIR}" "${viewer_imgui_SOURCE_DIR}/backends" "${viewer_implot_SOURCE_DIR}")
+    target_compile_definitions(xrfps_frametime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(xrfps_frametime PRIVATE d3d11 dxgi d3dcompiler dwmapi)
+    if(MSVC)
+        target_compile_options(xrfps_frametime PRIVATE /utf-8)
+    endif()
+endif()
 
 # Legacy ImGui Control Center, kept for a dependency-free fallback build.
 option(XRFPS_BUILD_GUI "Build the ImGui Control Center" OFF)
