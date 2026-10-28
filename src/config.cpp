@@ -72,6 +72,7 @@ bool Config::load(const std::string& file) {
         else if (key == "hide_delay_sec") { hide_delay_sec = as_float(); }
         else if (key == "f10_toggle") { f10_toggle = as_bool(); }
         else if (key == "timing_source") { timing_source = as_int(); }
+        else if (key == "gpu_timing") { gpu_timing = as_bool(); }
         else if (key == "controller_placement") { controller_placement = as_int(); }
         else if (key == "fallback_placement") { fallback_placement = as_int(); }
         else if (key == "panel_width_m") { panel_width_m = as_float(); }
@@ -121,6 +122,7 @@ bool Config::save(const std::string& file) const {
     fprintf(f, "hide_delay_sec = %.2f\n", hide_delay_sec);
     fprintf(f, "f10_toggle = %d\n", f10_toggle ? 1 : 0);
     fprintf(f, "timing_source = %d\n", timing_source);
+    fprintf(f, "gpu_timing = %d\n", gpu_timing ? 1 : 0);
     fprintf(f, "\ncontroller_placement = %d\n", controller_placement);
     fprintf(f, "fallback_placement = %d\n", fallback_placement);
     fprintf(f, "panel_width_m = %.3f\n", panel_width_m);

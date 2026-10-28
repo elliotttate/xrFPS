@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "frame_timing.h"
 #include "log.h"
 
 namespace {
@@ -86,6 +87,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSession(XrInstance instance,
     if (XR_SUCCEEDED(r)) {
         auto* s = xrfps::session_create(instance, *session, create_info, &g.fns, g.app_name,
                                         g.runtime_name);
+        xrfps::frame_timing::session_created(s, instance, create_info);
         std::lock_guard<std::mutex> lock(g.mtx);
         g.sessions[*session] = s;
     }
@@ -102,6 +104,7 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroySession(XrSession session) {
             g.sessions.erase(it);
         }
     }
+    xrfps::frame_timing::session_destroyed(s);
     xrfps::session_destroy(s);
     return g.fns.destroySession(session);
 }
@@ -184,41 +187,81 @@ XRAPI_ATTR XrResult XRAPI_CALL hook_xrSyncActions(XrSession session, const XrAct
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrWaitFrame(XrSession session, const XrFrameWaitInfo* wait_info,
                                                 XrFrameState* frame_state) {
+    perf::timeline::WaitSample wait;
+    xrfps::frame_timing::wait_enter(wait);
     const XrResult r = g.fns.waitFrame(session, wait_info, frame_state);
     if (XR_SUCCEEDED(r)) {
-        if (xrfps::Session* s = find_session(session)) {
+        xrfps::Session* s = find_session(session);
+        if (s != nullptr) {
             xrfps::session_note_display_period(s, frame_state->predictedDisplayPeriod);
         }
+        xrfps::frame_timing::wait_exit(s, wait, *frame_state);
     }
     return r;
 }
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrBeginFrame(XrSession session,
                                                  const XrFrameBeginInfo* begin_info) {
+    xrfps::frame_timing::begin_enter();
     const XrResult r = g.fns.beginFrame(session, begin_info);
-    if (XR_SUCCEEDED(r)) {
-        if (xrfps::Session* s = find_session(session)) {
-            xrfps::session_begin_frame(s);
-        }
+    xrfps::Session* s = find_session(session);
+    if (XR_SUCCEEDED(r) && s != nullptr) {
+        xrfps::session_begin_frame(s);
+    }
+    xrfps::frame_timing::begin_exit(s, XR_SUCCEEDED(r));
+    return r;
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL hook_xrLocateViews(XrSession session, const XrViewLocateInfo* locate_info,
+                                                  XrViewState* view_state, uint32_t capacity,
+                                                  uint32_t* count_output, XrView* views) {
+    if (locate_info != nullptr && locate_info->type == XR_TYPE_VIEW_LOCATE_INFO) {
+        xrfps::frame_timing::locate(locate_info->displayTime);
+    }
+    return g.fns.locateViews(session, locate_info, view_state, capacity, count_output, views);
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL hook_xrEndFrame(XrSession session, const XrFrameEndInfo* frame_end_info) {
+    xrfps::Session* s = find_session(session);
+    if (s == nullptr || frame_end_info == nullptr) {
+        return g.fns.endFrame(session, frame_end_info);
+    }
+    perf::timeline::FrameRecord frame;
+    xrfps::frame_timing::end_enter(s, frame, *frame_end_info);
+    const XrResult r = xrfps::session_end_frame(s, frame_end_info);
+    xrfps::frame_timing::end_exit(s, frame, *frame_end_info, s->submit_qpc);
+    return r;
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL hook_xrPollEvent(XrInstance instance, XrEventDataBuffer* event_data) {
+    const XrResult r = g.fns.pollEvent(instance, event_data);
+    if (r == XR_SUCCESS && event_data != nullptr && event_data->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+        xrfps::frame_timing::session_state_changed(
+            reinterpret_cast<const XrEventDataSessionStateChanged*>(event_data)->state);
     }
     return r;
 }
 
-XRAPI_ATTR XrResult XRAPI_CALL hook_xrEndFrame(XrSession session, const XrFrameEndInfo* frame_end_info) {
-    if (xrfps::Session* s = find_session(session)) {
-        return xrfps::session_end_frame(s, frame_end_info);
+// The app's swapchains only: the HUD's own goes straight to the next layer.
+XRAPI_ATTR XrResult XRAPI_CALL hook_xrCreateSwapchain(XrSession session, const XrSwapchainCreateInfo* create_info,
+                                                      XrSwapchain* swapchain) {
+    const XrResult r = g.fns.createSwapchain(session, create_info, swapchain);
+    if (XR_SUCCEEDED(r) && create_info != nullptr) {
+        xrfps::frame_timing::swapchain_created(*create_info);
     }
-    return g.fns.endFrame(session, frame_end_info);
+    return r;
 }
 
 XRAPI_ATTR XrResult XRAPI_CALL hook_xrDestroyInstance(XrInstance instance) {
     {
         std::lock_guard<std::mutex> lock(g.mtx);
         for (auto& [handle, s] : g.sessions) {
+            xrfps::frame_timing::session_destroyed(s);
             xrfps::session_destroy(s);
         }
         g.sessions.clear();
     }
+    xrfps::frame_timing::instance_destroyed();
     const PFN_xrDestroyInstance next_destroy = g.fns.destroyInstance;
     g.instance = XR_NULL_HANDLE;
     g.next_gipa = nullptr;
@@ -272,11 +315,21 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrGetInstanceProcAddr(XrInstance instance, 
         {"xrWaitFrame", (PFN_xrVoidFunction)hook_xrWaitFrame},
         {"xrBeginFrame", (PFN_xrVoidFunction)hook_xrBeginFrame},
         {"xrEndFrame", (PFN_xrVoidFunction)hook_xrEndFrame},
+        {"xrLocateViews", (PFN_xrVoidFunction)hook_xrLocateViews},
+        {"xrPollEvent", (PFN_xrVoidFunction)hook_xrPollEvent},
+        {"xrCreateSwapchain", (PFN_xrVoidFunction)hook_xrCreateSwapchain},
         {"xrDestroyInstance", (PFN_xrVoidFunction)hook_xrDestroyInstance},
     };
     for (const auto& hook : kHooks) {
         if (std::strcmp(name, hook.name) == 0) {
             *function = hook.fn;
+            return XR_SUCCESS;
+        }
+    }
+    // Only when the runtime has it: the app enabled XR_KHR_vulkan_enable2.
+    if (std::strcmp(name, "xrCreateVulkanDeviceKHR") == 0) {
+        if (const PFN_xrVoidFunction hook = xrfps::frame_timing::vulkan_device_hook()) {
+            *function = hook;
             return XR_SUCCESS;
         }
     }
@@ -394,6 +447,8 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
     load_next("xrWaitFrame", g.fns.waitFrame);
     load_next("xrBeginFrame", g.fns.beginFrame);
     load_next("xrEndFrame", g.fns.endFrame);
+    load_next("xrLocateViews", g.fns.locateViews);
+    load_next("xrPollEvent", g.fns.pollEvent);
     load_next("xrStringToPath", g.fns.stringToPath);
     load_next("xrCreateActionSet", g.fns.createActionSet);
     load_next("xrDestroyActionSet", g.fns.destroyActionSet);
@@ -425,6 +480,7 @@ XRAPI_ATTR XrResult XRAPI_CALL xrfps_xrCreateApiLayerInstance(const XrInstanceCr
 
     create_our_actions();
     strncpy_s(g.app_name, sizeof(g.app_name), create_info->applicationInfo.applicationName, _TRUNCATE);
+    xrfps::frame_timing::instance_created(g.instance, g.next_gipa, g.app_name);
     flog("instance ready (app: %s, runtime: %s)", create_info->applicationInfo.applicationName,
          g.runtime_name);
     return XR_SUCCESS;

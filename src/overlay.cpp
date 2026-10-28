@@ -8,6 +8,7 @@
 #include <string>
 
 #include "hud.h"
+#include "frame_timing.h"
 #include "log.h"
 
 namespace xrfps {
@@ -909,6 +910,7 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
             s->config_stamp = stamp;
             if (s->config.load()) {
                 flog("config reloaded");
+                frame_timing::settings_changed();
             }
         }
     }
@@ -956,6 +958,9 @@ XrResult session_end_frame(Session* s, const XrFrameEndInfo* frame_end_info) {
     const float cpu_submission_ms = s->begin_frame_qpc_ms > 0.0
                                         ? (float)(now - s->begin_frame_qpc_ms)
                                         : -1.0f;
+    LARGE_INTEGER submit{};
+    QueryPerformanceCounter(&submit);
+    s->submit_qpc = uint64_t(submit.QuadPart);
     const XrResult result = s->fns->endFrame(s->session, submit_info);
     const double completed = qpc_ms();
     if (XR_SUCCEEDED(result)) {

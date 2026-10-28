@@ -35,6 +35,8 @@ struct NextFns {
     PFN_xrWaitFrame waitFrame{};
     PFN_xrBeginFrame beginFrame{};
     PFN_xrEndFrame endFrame{};
+    PFN_xrLocateViews locateViews{};
+    PFN_xrPollEvent pollEvent{};
     PFN_xrStringToPath stringToPath{};
     PFN_xrCreateActionSet createActionSet{};
     PFN_xrDestroyActionSet destroyActionSet{};
@@ -57,6 +59,8 @@ struct NextFns {
 };
 
 enum class Gfx { None, D3D11, D3D12 };
+
+struct SessionTiming;  // frame_timing.cpp
 
 struct Session {
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
@@ -160,6 +164,11 @@ struct Session {
     double last_config_check_ms{0.0};
     MetricsReader metrics{};
     SessionPublisher session_info{};
+
+    // Frame timeline: GPU timers for this session, and when xrEndFrame handed
+    // the frame to the runtime (after xrFPS's own HUD work).
+    SessionTiming* timing{};
+    uint64_t submit_qpc{0};
 
     std::vector<uint8_t> pixels{};
     std::vector<const XrCompositionLayerBaseHeader*> layer_scratch{};

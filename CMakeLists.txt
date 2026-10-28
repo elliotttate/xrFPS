@@ -52,16 +52,40 @@ if(NOT openvr_headers_POPULATED)
 endif()
 set(XRFPS_OPENVR_INCLUDE "${openvr_headers_SOURCE_DIR}/headers")
 
+# Vulkan headers only, for timing Vulkan apps' GPU work: every entry point is
+# loaded from the app's own vulkan-1.dll at run time.
+FetchContent_Declare(
+    vulkan_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG v1.4.304
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(vulkan_headers)
+if(NOT vulkan_headers_POPULATED)
+    cmake_policy(PUSH)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(vulkan_headers)
+    cmake_policy(POP)
+endif()
+set(XRFPS_VULKAN_INCLUDE "${vulkan_headers_SOURCE_DIR}/include")
+
 add_library(XrApiLayer_xrfps SHARED
     src/layer.cpp
     src/overlay.cpp
     src/timing.cpp
     src/hud.cpp
     src/config.cpp
+    src/frame_timing.cpp
+    src/frame_timeline.h
+    src/gpu_frame_timer.h
+    src/vulkan_frame_timer.h
 )
-target_include_directories(XrApiLayer_xrfps PRIVATE "${XRFPS_OPENXR_INCLUDE}" "${XRFPS_OPENVR_INCLUDE}")
-target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi gdiplus)
-target_compile_definitions(XrApiLayer_xrfps PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_include_directories(XrApiLayer_xrfps PRIVATE
+    "${XRFPS_OPENXR_INCLUDE}" "${XRFPS_OPENVR_INCLUDE}" "${XRFPS_VULKAN_INCLUDE}")
+target_link_libraries(XrApiLayer_xrfps PRIVATE d3d11 d3d12 dxgi gdiplus opengl32)
+target_compile_definitions(XrApiLayer_xrfps PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN XRFPS_VERSION="${PROJECT_VERSION}")
 
 # The manifest travels next to the DLL; library_path is relative.
 add_custom_command(TARGET XrApiLayer_xrfps POST_BUILD
@@ -95,6 +119,15 @@ if(BUILD_TESTING)
             COMMAND xrfps_hudtest --theme ${XRFPS_THEME}
                     "${CMAKE_CURRENT_BINARY_DIR}/hudtest-theme-${XRFPS_THEME}.bmp")
     endforeach()
+    add_executable(xrfps_frame_timeline_test test/frame_timeline_tests.cpp)
+    target_include_directories(xrfps_frame_timeline_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    add_test(NAME xrfps_frame_timeline COMMAND xrfps_frame_timeline_test)
+    set_tests_properties(xrfps_frame_timeline PROPERTIES TIMEOUT 60)
+    add_executable(xrfps_gpu_frame_timer_test test/gpu_frame_timer_tests.cpp)
+    target_include_directories(xrfps_gpu_frame_timer_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(xrfps_gpu_frame_timer_test PRIVATE d3d12 d3d11 dxgi)
+    add_test(NAME xrfps_gpu_frame_timer COMMAND xrfps_gpu_frame_timer_test)
+    set_tests_properties(xrfps_gpu_frame_timer PROPERTIES TIMEOUT 60)
 
     # Manual runtime probe used by support/development. It is intentionally not
     # a CTest because SteamVR need not be installed on build machines.

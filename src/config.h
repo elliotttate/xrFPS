@@ -22,6 +22,9 @@ struct Config {
     // 0 = Auto, 1 = SteamVR compositor, 2 = Meta performance metrics,
     // 3 = portable OpenXR submission timing.
     int timing_source{0};
+    // GPU timestamps on the app's queue for the frame timeline (the frame-time
+    // viewer's GPU times). XRFPS_GPU_TIMING=0/1 overrides it.
+    bool gpu_timing{true};
 
     // --- placement ---
     // 0 = adaptive controller underside (the original xrFPS placement),
