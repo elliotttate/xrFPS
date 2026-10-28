@@ -2,10 +2,10 @@
 ; version defines below; the defaults exist so the script can be bypassed.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.5.1"
+  #define MyAppVersion "0.6.0"
 #endif
 #ifndef MyFileVersion
-  #define MyFileVersion "0.5.1.0"
+  #define MyFileVersion "0.6.0.0"
 #endif
 #ifndef PayloadRoot
   #define PayloadRoot "..\artifacts\payload"

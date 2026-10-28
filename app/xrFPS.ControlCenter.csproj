@@ -24,7 +24,7 @@
     <AssemblyName>xrFPS.ControlCenter</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\xrFPS.ico</ApplicationIcon>
-    <Version>0.5.1</Version>
+    <Version>0.6.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
